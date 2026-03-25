@@ -97,10 +97,15 @@ export async function runAmazonCheck(clients, email, geminiKey) {
       extractDigitalSubs(c2, report),
       extractCartInterest(c3, report),
     ]);
-    // Wave 3: Gemini product name extraction
-    const allProducts = [
-      ...new Set([...report.cartInterest.recommendations, ...report.cartInterest.storeNews]),
-    ].filter(p => p && p.length > 3);
+    // Wave 3: AI product name extraction (dedup first)
+    const rawProducts = [...report.cartInterest.recommendations, ...report.cartInterest.storeNews]
+      .filter(p => p && p.length > 5 && !p.endsWith("..."));
+    const seen = new Set();
+    const allProducts = [];
+    for (const p of rawProducts) {
+      const key = p.slice(0, 40).toLowerCase();
+      if (!seen.has(key)) { seen.add(key); allProducts.push(p); }
+    }
     if (allProducts.length > 0 && geminiKey) {
       try {
         const analysis = await analyzeInterests(geminiKey, allProducts);

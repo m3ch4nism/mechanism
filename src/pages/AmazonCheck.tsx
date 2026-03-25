@@ -167,26 +167,13 @@ function AmazonReport({ report }: { report: any }) {
       <Section title="[6] cart_interest">
         {report.cartInterest.groups?.length > 0 && (
           <>
-            <div className="report-label">// identified (ai):</div>
+            <div className="report-label">// identified ({report.cartInterest.groups.length} categories):</div>
             {report.cartInterest.groups.map((g: any, i: number) => (
-              <div key={i}>
-                <div className="report-item highlight">- {g.name}{g.count > 1 ? ` (x${g.count})` : ""}</div>
-                {g.originals.map((o: string, j: number) => (
-                  <div key={j} className="report-item dim" style={{paddingLeft: 16}}>  {o}</div>
-                ))}
-              </div>
+              <CollapsibleItem key={i} name={g.name} count={g.count} items={g.originals} />
             ))}
           </>
         )}
-        {report.cartInterest.classified?.length > 0 && !report.cartInterest.groups?.length && (
-          <>
-            <div className="report-label">// products:</div>
-            {report.cartInterest.classified.map((c: any, i: number) => (
-              <div key={i} className="report-item">- {c.name}</div>
-            ))}
-          </>
-        )}
-        {report.cartInterest.recommendations.length > 0 && !report.cartInterest.classified?.length && (
+        {report.cartInterest.recommendations.length > 0 && !report.cartInterest.groups?.length && (
           <>
             <div className="report-label">// raw (no api key):</div>
             {report.cartInterest.recommendations.slice(0, 10).map((r: string, i: number) => (
@@ -215,6 +202,21 @@ function Section({ title, children }: { title: string; children: React.ReactNode
     <div className="report-section">
       <h4>{title}</h4>
       {children}
+    </div>
+  );
+}
+
+function CollapsibleItem({ name, count, items }: { name: string; count: number; items: string[] }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div>
+      <div className="report-item highlight collapsible-header" onClick={() => setOpen(!open)} style={{cursor: "pointer"}}>
+        <span style={{marginRight: 6, fontSize: 10, display: "inline-block", transform: open ? "rotate(90deg)" : "none", transition: "transform 0.15s"}}>{"\u25B6"}</span>
+        {name}{count > 1 ? ` (x${count})` : ""}
+      </div>
+      {open && items.map((o: string, j: number) => (
+        <div key={j} className="report-item dim" style={{paddingLeft: 24, fontSize: 11}}>- {o}</div>
+      ))}
     </div>
   );
 }

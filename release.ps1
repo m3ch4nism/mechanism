@@ -58,7 +58,7 @@ $latestJson = @{
     }
 } | ConvertTo-Json -Depth 4
 $latestPath = "$nsisDir\latest.json"
-$latestJson | Set-Content $latestPath -Encoding UTF8
+[System.IO.File]::WriteAllText($latestPath, $latestJson, (New-Object System.Text.UTF8Encoding $false))
 
 # 5. GitHub Release
 Write-Host "[5/5] Uploading to GitHub..." -ForegroundColor Yellow

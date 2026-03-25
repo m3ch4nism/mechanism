@@ -44,6 +44,7 @@ export default function App() {
   useEffect(() => {
     boot();
     check().then(update => {
+      console.log("updater check result:", update);
       if (update) {
         setUpdateAvailable({
           version: update.version,
@@ -53,7 +54,9 @@ export default function App() {
           },
         });
       }
-    }).catch(() => {});
+    }).catch(e => {
+      console.error("updater error:", e);
+    });
   }, []);
 
   useEffect(() => {

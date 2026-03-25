@@ -12,6 +12,7 @@ export default function Sidebar() {
     <div className="sidebar">
       <div className="sidebar-header">
         <span style={{letterSpacing: "2px", textTransform: "lowercase"}}>mechanism</span>
+        <span style={{fontSize: 9, color: "var(--text-dim)", marginLeft: "auto"}}>v{__APP_VERSION__}</span>
       </div>
 
       <div className="sidebar-section">
