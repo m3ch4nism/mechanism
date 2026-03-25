@@ -167,7 +167,7 @@ function AmazonReport({ report }: { report: any }) {
       <Section title="[6] cart_interest">
         {report.cartInterest.groups?.length > 0 && (
           <>
-            <div className="report-label">// identified (gemini):</div>
+            <div className="report-label">// identified (ai):</div>
             {report.cartInterest.groups.map((g: any, i: number) => (
               <div key={i}>
                 <div className="report-item highlight">- {g.name}{g.count > 1 ? ` (x${g.count})` : ""}</div>
@@ -188,7 +188,7 @@ function AmazonReport({ report }: { report: any }) {
         )}
         {report.cartInterest.recommendations.length > 0 && !report.cartInterest.classified?.length && (
           <>
-            <div className="report-label">// raw (no gemini key):</div>
+            <div className="report-label">// raw (no api key):</div>
             {report.cartInterest.recommendations.slice(0, 10).map((r: string, i: number) => (
               <div key={i} className="report-item">- {r}</div>
             ))}

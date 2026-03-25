@@ -1,20 +1,22 @@
 import https from "https";
 
-const GEMINI_MODEL = "gemini-2.0-flash";
-
-function geminiRequest(apiKey, prompt) {
+function llmRequest(apiKey, prompt) {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.1, maxOutputTokens: 1024 },
+      model: "llama-3.1-8b-instant",
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.1,
+      max_tokens: 1024,
     });
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
-    const parsed = new URL(url);
     const req = https.request({
-      hostname: parsed.hostname,
-      path: parsed.pathname + parsed.search,
+      hostname: "api.groq.com",
+      path: "/openai/v1/chat/completions",
       method: "POST",
-      headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) },
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Length": Buffer.byteLength(body),
+      },
     }, (res) => {
       let data = "";
       res.on("data", (chunk) => { data += chunk; });
@@ -22,13 +24,12 @@ function geminiRequest(apiKey, prompt) {
         try {
           const json = JSON.parse(data);
           if (json.error) return reject(new Error(json.error.message));
-          const text = json.candidates?.[0]?.content?.parts?.[0]?.text || "";
-          resolve(text);
-        } catch (e) { reject(new Error("Failed to parse Gemini response")); }
+          resolve(json.choices?.[0]?.message?.content || "");
+        } catch { reject(new Error("Failed to parse API response")); }
       });
     });
     req.on("error", reject);
-    req.setTimeout(30000, () => { req.destroy(); reject(new Error("Gemini API timeout")); });
+    req.setTimeout(30000, () => { req.destroy(); reject(new Error("API timeout")); });
     req.write(body);
     req.end();
   });
@@ -51,7 +52,7 @@ Rules:
 - Examples:
   "Telescopic Fishing Rod Carbon Fiber 12ft" → "Fishing Rod"
   "Sony WH-1000XM5 Wireless Noise Cancelling Headphones Black" → "Headphones"
-  "SAMSUNG Galaxy S24 Ultra Case Clear Slim" → "Phone Case"  
+  "SAMSUNG Galaxy S24 Ultra Case Clear Slim" → "Phone Case"
   "Instant Pot Duo 7-in-1 Electric Pressure Cooker 6Qt" → "Pressure Cooker"
   "Crest 3D White Toothpaste Radiant Mint 3.8oz 3-Pack" → "Toothpaste"
 
@@ -61,7 +62,7 @@ No explanation, no markdown, just the JSON array.
 Products:
 ${list}`;
 
-  const raw = await geminiRequest(apiKey, prompt);
+  const raw = await llmRequest(apiKey, prompt);
   try {
     const cleaned = raw.replace(/```json\s*/g, "").replace(/```/g, "").trim();
     const results = JSON.parse(cleaned);
@@ -79,7 +80,6 @@ export async function analyzeInterests(apiKey, productNames) {
 
   const classified = await classifyProducts(apiKey, productNames);
 
-  // group by simplified name
   const groups = {};
   for (const item of classified) {
     const key = item.name.toLowerCase();

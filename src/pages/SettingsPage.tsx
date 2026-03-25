@@ -70,11 +70,11 @@ export default function SettingsPage() {
       </div>
 
       <div className="settings-section">
-        <h3><Brain size={16} /> Gemini AI</h3>
-        <p className="hint">Free API key from ai.google.dev -- used in Amazon Check to identify products</p>
+        <h3><Brain size={16} /> Groq AI</h3>
+        <p className="hint">Free API key from console.groq.com -- used in Amazon Check to identify products</p>
         <div className="row">
           <input
-            placeholder="Gemini API key"
+            placeholder="Groq API key (gsk_...)"
             type="password"
             value={geminiKey}
             onChange={e => setGeminiKey(e.target.value)}
@@ -88,7 +88,7 @@ export default function SettingsPage() {
             {geminiSaved ? "Saved!" : "Save"}
           </button>
         </div>
-        <p className="hint" style={{marginTop: 4}}>Without key: raw product names. With key: AI extracts short names (Fishing Rod, Headphones, etc.)</p>
+        <p className="hint" style={{marginTop: 4}}>Without key: raw product names. With key: AI extracts short names (Fishing Rod, Headphones, etc.). Free, no billing.</p>
       </div>
     </div>
   );
