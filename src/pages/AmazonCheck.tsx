@@ -164,27 +164,7 @@ function AmazonReport({ report }: { report: any }) {
           : <div className="report-empty">null</div>}
       </Section>
 
-      <Section title="[6] cart_interest">
-        {report.cartInterest.groups?.length > 0 && (
-          <>
-            <div className="report-label">// identified ({report.cartInterest.groups.length} categories):</div>
-            {report.cartInterest.groups.map((g: any, i: number) => (
-              <CollapsibleItem key={i} name={g.name} count={g.count} items={g.originals} />
-            ))}
-          </>
-        )}
-        {report.cartInterest.recommendations.length > 0 && !report.cartInterest.groups?.length && (
-          <>
-            <div className="report-label">// raw (no api key):</div>
-            {report.cartInterest.recommendations.slice(0, 10).map((r: string, i: number) => (
-              <div key={i} className="report-item">- {r}</div>
-            ))}
-          </>
-        )}
-        {!report.cartInterest.recommendations.length && !report.cartInterest.storeNews.length && (
-          <div className="report-empty">null</div>
-        )}
-      </Section>
+      <CartInterestSection report={report} />
 
       {report.errors.length > 0 && (
         <Section title="[!] errors">
@@ -194,6 +174,49 @@ function AmazonReport({ report }: { report: any }) {
         </Section>
       )}
     </div>
+  );
+}
+
+function CartInterestSection({ report }: { report: any }) {
+  const [showAll, setShowAll] = useState(false);
+  const groups = report.cartInterest.groups || [];
+  // Filter: only show items where AI actually simplified the name (name shorter than original)
+  const simplified = groups.filter((g: any) => g.originals.every((o: string) => g.name.length < o.length * 0.6));
+  const unsimplified = groups.filter((g: any) => !simplified.includes(g));
+  const display = showAll ? groups : simplified.slice(0, 20);
+  const hasMore = !showAll && (simplified.length > 20 || unsimplified.length > 0);
+  const noData = !report.cartInterest.recommendations.length && !report.cartInterest.storeNews.length;
+
+  return (
+    <Section title="[6] cart_interest">
+      {display.length > 0 && (
+        <>
+          <div className="report-label">// identified ({simplified.length}):</div>
+          {display.map((g: any, i: number) => (
+            <CollapsibleItem key={i} name={g.name} count={g.count} items={g.originals} />
+          ))}
+          {hasMore && (
+            <div className="report-item dim" style={{cursor: "pointer", marginTop: 4}} onClick={() => setShowAll(true)}>
+              + {groups.length - display.length} more...
+            </div>
+          )}
+          {showAll && unsimplified.length > 0 && (
+            <div className="report-item dim" style={{cursor: "pointer", marginTop: 4}} onClick={() => setShowAll(false)}>
+              - collapse
+            </div>
+          )}
+        </>
+      )}
+      {report.cartInterest.recommendations.length > 0 && !groups.length && (
+        <>
+          <div className="report-label">// raw (no api key):</div>
+          {report.cartInterest.recommendations.slice(0, 10).map((r: string, i: number) => (
+            <div key={i} className="report-item">- {r}</div>
+          ))}
+        </>
+      )}
+      {noData && <div className="report-empty">null</div>}
+    </Section>
   );
 }
 

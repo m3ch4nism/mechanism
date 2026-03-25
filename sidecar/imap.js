@@ -101,7 +101,23 @@ export async function connectImap(email, password, settings, proxyStr) {
     auth: { user: email, pass: password },
     logger: false,
     tls: { rejectUnauthorized: false },
+    connectionTimeout: 15000,
   };
+  try {
+    return await _doConnect(config, proxy, settings);
+  } catch (e) {
+    const msg = e.message || "";
+    if (/wrong version number|packet length too long/i.test(msg)) {
+      throw new Error(`SSL mismatch for ${settings.host}:${settings.port}. Try ${settings.secure ? "disabling" : "enabling"} SSL or port ${settings.secure ? "143" : "993"}`);
+    }
+    if (/AUTHENTICATIONFAILED|LOGIN/i.test(msg)) {
+      throw new Error(`Wrong password for ${email}`);
+    }
+    throw e;
+  }
+}
+
+async function _doConnect(config, proxy, settings) {
 
   if (proxy && proxy.type === "http") {
     // HTTP CONNECT tunnel: get raw TCP socket, then hand to ImapFlow

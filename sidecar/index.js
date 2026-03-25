@@ -155,15 +155,34 @@ async function handleRequest(req) {
         const proxy = getSetting("proxy");
         const geminiKey = getSetting("gemini_key");
         const settings = { host, port, secure };
-        const [c1, c2, c3] = await Promise.all([
-          connectImap(email, password, settings, proxy),
-          connectImap(email, password, settings, proxy),
-          connectImap(email, password, settings, proxy),
-        ]);
+        const clients = [];
+        // Try 3 parallel connections, fallback to fewer if proxy can't handle it
+        const tryConnect = async () => {
+          try { return await connectImap(email, password, settings, proxy); }
+          catch (e) { log("ERROR", `amazonCheck connect failed: ${e.message}`); return null; }
+        };
+        const [r1, r2, r3] = await Promise.all([tryConnect(), tryConnect(), tryConnect()]);
+        if (r1) clients.push(r1);
+        if (r2) clients.push(r2);
+        if (r3) clients.push(r3);
+        // If less than 3 connected, retry missing ones sequentially
+        while (clients.length < 3) {
+          try {
+            const c = await connectImap(email, password, settings, proxy);
+            clients.push(c);
+          } catch (e) {
+            log("ERROR", `amazonCheck retry connect failed: ${e.message}`);
+            break;
+          }
+        }
+        if (clients.length === 0) throw new Error("Failed to connect to IMAP server");
+        // Pad to 3 by reusing connections
+        while (clients.length < 3) clients.push(clients[0]);
         try {
-          result = await runAmazonCheck([c1, c2, c3], email, geminiKey);
+          result = await runAmazonCheck(clients, email, geminiKey);
         } finally {
-          await Promise.allSettled([c1.logout(), c2.logout(), c3.logout()]);
+          const unique = [...new Set(clients)];
+          await Promise.allSettled(unique.map(c => c.logout()));
         }
         break;
       }

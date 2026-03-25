@@ -44,13 +44,19 @@ Return ONLY JSON: [{"id":1,"name":"short name"},...]
 Products:
 `;
 
-async function classifyBatch(apiKey, items, offset) {
-  const list = items.map((n, i) => `${i + offset + 1}. ${n}`).join("\n");
+async function classifyBatch(apiKey, items) {
+  const list = items.map((n, i) => `${i + 1}. ${n}`).join("\n");
   const raw = await llmRequest(apiKey, PROMPT_TEMPLATE + list);
   try {
     const cleaned = raw.replace(/```json\s*/g, "").replace(/```/g, "").trim();
-    return JSON.parse(cleaned);
-  } catch { return []; }
+    const results = JSON.parse(cleaned);
+    return items.map((original, i) => {
+      const match = results.find(r => r.id === i + 1);
+      return match?.name || original;
+    });
+  } catch {
+    return items.map(n => n);
+  }
 }
 
 export async function classifyProducts(apiKey, productNames) {
@@ -58,20 +64,22 @@ export async function classifyProducts(apiKey, productNames) {
 
   const filtered = productNames.filter(n => n && n.length > 3);
   const BATCH = 15;
-  const allResults = [];
+  const allNames = [];
 
   for (let i = 0; i < filtered.length; i += BATCH) {
     const batch = filtered.slice(i, i + BATCH);
     try {
-      const results = await classifyBatch(apiKey, batch, i);
-      allResults.push(...results);
-    } catch { /* skip failed batch */ }
+      const names = await classifyBatch(apiKey, batch);
+      allNames.push(...names);
+    } catch {
+      allNames.push(...batch);
+    }
   }
 
-  return filtered.map((original, i) => {
-    const match = allResults.find(r => r.id === i + 1);
-    return { original, name: match?.name || original };
-  });
+  return filtered.map((original, i) => ({
+    original,
+    name: allNames[i] || original,
+  }));
 }
 
 export async function analyzeInterests(apiKey, productNames) {
@@ -81,8 +89,6 @@ export async function analyzeInterests(apiKey, productNames) {
 
   const groups = {};
   for (const item of classified) {
-    // skip items where AI didn't simplify (name === original)
-    const simplified = item.name.length < item.original.length * 0.7;
     const key = item.name.toLowerCase().trim();
     if (!groups[key]) groups[key] = { name: item.name, count: 0, originals: [] };
     groups[key].count++;
