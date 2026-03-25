@@ -59,8 +59,29 @@ export async function initDb() {
     cached_at TEXT DEFAULT (datetime('now')),
     UNIQUE(account_email, uid, folder)
   )`);
+  db.run(`CREATE TABLE IF NOT EXISTS check_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT NOT NULL,
+    checked_at TEXT DEFAULT (datetime('now')),
+    report TEXT NOT NULL
+  )`);
   save();
   return db;
+}
+
+export function saveCheckHistory(email, report) {
+  if (!db) return;
+  db.run("INSERT INTO check_history (email, report) VALUES (?, ?)", [email, JSON.stringify(report)]);
+  // Keep last 20 per email
+  db.run("DELETE FROM check_history WHERE email = ? AND id NOT IN (SELECT id FROM check_history WHERE email = ? ORDER BY id DESC LIMIT 20)", [email, email]);
+  save();
+}
+
+export function getCheckHistory(email) {
+  if (!db) return [];
+  const rows = db.exec("SELECT id, checked_at, report FROM check_history WHERE email = ? ORDER BY id DESC LIMIT 20", [email]);
+  if (!rows.length) return [];
+  return rows[0].values.map(r => ({ id: r[0], date: r[1], report: JSON.parse(r[2]) }));
 }
 
 export function save() {

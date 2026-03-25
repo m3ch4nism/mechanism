@@ -1,6 +1,49 @@
 import { useAppStore } from "../stores/appStore";
-import { Loader2, X } from "lucide-react";
+import { Loader2, X, Copy, Download } from "lucide-react";
 import { useState } from "react";
+import { save } from "@tauri-apps/plugin-dialog";
+import { writeTextFile } from "@tauri-apps/plugin-fs";
+
+function reportToText(r: any): string {
+  const lines: string[] = [];
+  lines.push(`=== AMAZON CHECK: ${r.email} ===`);
+  lines.push(`Date: ${new Date().toISOString().slice(0, 19)}`);
+  lines.push("");
+
+  lines.push("[1] CARDS ON FILE");
+  if (r.cards.length) r.cards.forEach((c: any) => lines.push(`  - ${c.last4 === "????" ? c.type : `${c.type} **** ${c.last4}`}${c.expiry ? ` exp ${c.expiry}` : ""}`));
+  if (r.cardsExpired.length) { lines.push("  // expired:"); r.cardsExpired.forEach((c: any) => lines.push(`  - ${c.type} **** ${c.last4}${c.expiry ? ` exp ${c.expiry}` : ""}`)); }
+  if (r.expiryDates.length) { lines.push("  // exp_dates:"); r.expiryDates.forEach((d: string) => lines.push(`  - ${d}`)); }
+  if (!r.cards.length && !r.cardsExpired.length) lines.push("  null");
+
+  lines.push("\n[2] LAST ORDERS");
+  if (r.orders.length) r.orders.forEach((o: any) => lines.push(`  - ${o.date ? `[${o.date}] ` : ""}${o.items?.join(", ") || "unknown"}`));
+  else lines.push("  null");
+
+  lines.push("\n[3] SUBSCRIBE & SAVE");
+  if (r.subscribeSave.length) r.subscribeSave.forEach((s: string) => lines.push(`  - ${s}`));
+  else lines.push("  null");
+
+  lines.push("\n[4] DIGITAL SUBSCRIPTIONS");
+  if (r.digitalSubs.length) r.digitalSubs.forEach((s: string) => lines.push(`  - ${s}`));
+  else lines.push("  null");
+
+  lines.push("\n[5] ACCOUNT NAME");
+  lines.push(`  ${r.accountName || "null"}`);
+
+  lines.push("\n[6] CART INTEREST");
+  const groups = r.cartInterest?.groups || [];
+  if (groups.length) {
+    groups.forEach((g: any) => {
+      lines.push(`  - ${g.name}${g.count > 1 ? ` (x${g.count})` : ""}`);
+    });
+  } else if (r.cartInterest?.recommendations?.length) {
+    r.cartInterest.recommendations.slice(0, 10).forEach((p: string) => lines.push(`  - ${p}`));
+  } else lines.push("  null");
+
+  if (r.errors.length) { lines.push("\n[!] ERRORS"); r.errors.forEach((e: string) => lines.push(`  - ${e}`)); }
+  return lines.join("\n");
+}
 
 export default function AmazonCheck() {
   const { accounts, amazonReport, amazonLoading, runAmazonCheck, error } = useAppStore();
@@ -38,6 +81,22 @@ export default function AmazonCheck() {
         <button className="btn primary" onClick={handleRun} disabled={amazonLoading}>
           {amazonLoading ? <><Loader2 size={14} className="spin" /> scanning...</> : "> run"}
         </button>
+        {amazonReport && (
+          <>
+            <button className="btn" onClick={() => { navigator.clipboard.writeText(reportToText(amazonReport)); }} title="Copy report">
+              <Copy size={14} /> copy
+            </button>
+            <button className="btn" onClick={async () => {
+              const path = await save({
+                defaultPath: `${amazonReport.email}-${new Date().toISOString().slice(0, 10)}.txt`,
+                filters: [{ name: "Text", extensions: ["txt"] }],
+              });
+              if (path) await writeTextFile(path, reportToText(amazonReport));
+            }} title="Export .txt">
+              <Download size={14} /> .txt
+            </button>
+          </>
+        )}
       </div>
       {error && <div className="error">{error}</div>}
 

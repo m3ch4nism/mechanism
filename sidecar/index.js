@@ -32,6 +32,7 @@ import {
   addCustomImap, getCustomImap, getAllCustomImap,
   cacheEmails, getCachedEmails,
   addPreset, getPresets, removePreset,
+  saveCheckHistory, getCheckHistory,
 } from "./db.js";
 import {
   connectImap, fetchFolders, fetchEmails, searchEmails, getImapSettings, testProxy,
@@ -180,12 +181,17 @@ async function handleRequest(req) {
         while (clients.length < 3) clients.push(clients[0]);
         try {
           result = await runAmazonCheck(clients, email, geminiKey);
+          saveCheckHistory(email, result);
         } finally {
           const unique = [...new Set(clients)];
           await Promise.allSettled(unique.map(c => c.logout()));
         }
         break;
       }
+
+      case "getCheckHistory":
+        result = getCheckHistory(params.email);
+        break;
 
       case "setProxy":
         if (params.proxy) setSetting("proxy", params.proxy);

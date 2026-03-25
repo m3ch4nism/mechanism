@@ -1,10 +1,10 @@
 import { useAppStore } from "../stores/appStore";
 import { useConfirm } from "./ConfirmDialog";
-import { Mail, Plus, Trash2, Settings, ShieldCheck, FolderOpen, Filter } from "lucide-react";
+import { Plus, Trash2, Settings, ShieldCheck, FolderOpen, Filter, Loader2 } from "lucide-react";
 import { useState } from "react";
 
 export default function Sidebar() {
-  const { accounts, selectedAccount, folders, selectedFolder, selectAccount, selectFolder, removeAccount } = useAppStore();
+  const { accounts, selectedAccount, folders, selectedFolder, selectAccount, selectFolder, removeAccount, connectedAccounts } = useAppStore();
   const confirm = useConfirm();
   const [showAdd, setShowAdd] = useState(false);
 
@@ -28,7 +28,7 @@ export default function Sidebar() {
             className={`sidebar-item ${selectedAccount === acc.email ? "active" : ""}`}
             onClick={() => { window.location.hash = "/"; selectAccount(acc.email); }}
           >
-            <Mail size={14} />
+            <span style={{width: 6, height: 6, borderRadius: "50%", background: connectedAccounts.has(acc.email) ? "var(--success)" : "var(--text-dim)", flexShrink: 0}} />
             <span className="truncate">{acc.email}</span>
             <button
               className="icon-btn delete-btn"
@@ -85,6 +85,7 @@ function AddAccountModal({ onClose }: { onClose: () => void }) {
   const [port, setPort] = useState("993");
   const [ssl, setSsl] = useState(true);
   const [error, setError] = useState("");
+  const [validating, setValidating] = useState(false);
 
   const handleSubmit = async () => {
     if (!proxy) { setError("Set up proxy in Settings before adding accounts"); return; }
@@ -98,6 +99,19 @@ function AddAccountModal({ onClose }: { onClose: () => void }) {
         else { setError(`Unknown domain: ${domain}. Enter IMAP settings manually.`); return; }
       } catch { setError("Failed to get IMAP settings"); return; }
     }
+    // Validate connection before adding
+    setValidating(true);
+    setError("");
+    try {
+      const sidecar = await import("../lib/sidecar");
+      await sidecar.call("connect", { email, password, host: h, port: p, secure: ssl });
+      await sidecar.call("disconnect", { email });
+    } catch (e: any) {
+      setValidating(false);
+      setError(`Connection failed: ${e.message}`);
+      return;
+    }
+    setValidating(false);
     const ok = await addAccount(email, password, h, p, ssl);
     if (ok) onClose();
     else setError("Account already exists");
@@ -117,7 +131,9 @@ function AddAccountModal({ onClose }: { onClose: () => void }) {
         </div>
         {error && <div className="error">{error}</div>}
         <div className="row">
-          <button className="btn primary" onClick={handleSubmit}>Add</button>
+          <button className="btn primary" onClick={handleSubmit} disabled={validating}>
+            {validating ? <><Loader2 size={14} className="spin" /> checking...</> : "Add"}
+          </button>
           <button className="btn" onClick={onClose}>Cancel</button>
         </div>
       </div>

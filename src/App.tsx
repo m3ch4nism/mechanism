@@ -22,6 +22,13 @@ export default function App() {
   const [updateAvailable, setUpdateAvailable] = useState<{ version: string; download: () => Promise<void> } | null>(null);
   const [updating, setUpdating] = useState(false);
 
+  useEffect(() => {
+    const t = localStorage.getItem("theme");
+    if (t) document.documentElement.setAttribute("data-theme", t);
+    const fs = localStorage.getItem("fontSize");
+    if (fs) document.documentElement.style.fontSize = fs + "px";
+  }, []);
+
   const boot = async () => {
     try {
       setStartError("");

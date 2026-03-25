@@ -1,11 +1,13 @@
 import { useAppStore } from "../stores/appStore";
 import { call } from "../lib/sidecar";
-import { Settings, Globe, Loader2, Wifi, Brain } from "lucide-react";
+import { Settings, Globe, Loader2, Wifi, Brain, Palette, Type } from "lucide-react";
 import { useState, useEffect } from "react";
 
 export default function SettingsPage() {
   const { proxy, setProxy } = useAppStore();
   const [proxyInput, setProxyInput] = useState(proxy || "");
+  const [theme, setTheme] = useState(localStorage.getItem("theme") || "dark");
+  const [fontSize, setFontSize] = useState(parseInt(localStorage.getItem("fontSize") || "12"));
   const [saved, setSaved] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ directIp: string; proxyIp: string; working: boolean } | null>(null);
@@ -89,6 +91,32 @@ export default function SettingsPage() {
           </button>
         </div>
         <p className="hint" style={{marginTop: 4}}>Without key: raw product names. With key: AI extracts short names (Fishing Rod, Headphones, etc.). Free, no billing.</p>
+      </div>
+
+      <div className="settings-section">
+        <h3><Palette size={16} /> Theme</h3>
+        <div className="row">
+          {(["dark", "light"] as const).map(t => (
+            <button key={t} className={`btn ${theme === t ? "primary" : ""}`} onClick={() => {
+              setTheme(t);
+              localStorage.setItem("theme", t);
+              document.documentElement.setAttribute("data-theme", t);
+            }}>{t}</button>
+          ))}
+        </div>
+      </div>
+
+      <div className="settings-section">
+        <h3><Type size={16} /> Font Size</h3>
+        <div className="row">
+          <input type="range" min="10" max="16" value={fontSize} onChange={e => {
+            const v = parseInt(e.target.value);
+            setFontSize(v);
+            localStorage.setItem("fontSize", String(v));
+            document.documentElement.style.fontSize = v + "px";
+          }} style={{flex: 1}} />
+          <span style={{minWidth: 30}}>{fontSize}px</span>
+        </div>
       </div>
     </div>
   );

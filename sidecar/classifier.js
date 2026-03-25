@@ -1,6 +1,6 @@
 import https from "https";
 
-function llmRequest(apiKey, prompt) {
+function _rawRequest(apiKey, prompt) {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify({
       model: "llama-3.1-8b-instant",
@@ -23,6 +23,9 @@ function llmRequest(apiKey, prompt) {
       res.on("end", () => {
         try {
           const json = JSON.parse(data);
+          if (res.statusCode === 429) {
+            return reject({ retry: true, message: json.error?.message || "Rate limited" });
+          }
           if (json.error) return reject(new Error(json.error.message));
           resolve(json.choices?.[0]?.message?.content || "");
         } catch { reject(new Error("Failed to parse API response")); }
@@ -33,6 +36,20 @@ function llmRequest(apiKey, prompt) {
     req.write(body);
     req.end();
   });
+}
+
+async function llmRequest(apiKey, prompt, retries = 2) {
+  for (let i = 0; i <= retries; i++) {
+    try {
+      return await _rawRequest(apiKey, prompt);
+    } catch (e) {
+      if (e.retry && i < retries) {
+        await new Promise(r => setTimeout(r, 3000 * (i + 1)));
+        continue;
+      }
+      throw e instanceof Error ? e : new Error(e.message || "API error");
+    }
+  }
 }
 
 const PROMPT_TEMPLATE = `Extract the SHORT product name (1-3 words) for each item. Remove brands, sizes, colors, model numbers.

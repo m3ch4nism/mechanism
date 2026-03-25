@@ -22,6 +22,12 @@
       ]
     },
     "shell:allow-stdin-write",
-    "updater:default"
+    "updater:default",
+    "dialog:default",
+    {
+      "identifier": "fs:allow-write-text-file",
+      "allow": [{ "path": "**" }]
+    },
+    "fs:default"
   ]
 }

@@ -52,6 +52,7 @@ interface AppState {
   emails: Email[];
   selectedEmail: Email | null;
   proxy: string | null;
+  connectedAccounts: Set<string>;
   loading: boolean;
   error: string | null;
   amazonReport: AmazonReport | null;
@@ -85,6 +86,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   emails: [],
   selectedEmail: null,
   proxy: null,
+  connectedAccounts: new Set<string>(),
   loading: false,
   error: null,
   amazonReport: null,
@@ -118,9 +120,13 @@ export const useAppStore = create<AppState>((set, get) => ({
   removeAccount: async (email) => {
     await call("removeAccount", { email });
     try { await call("disconnect", { email }); } catch {}
+    const connected = new Set(get().connectedAccounts);
+    connected.delete(email);
     const state = get();
     if (state.selectedAccount === email) {
-      set({ selectedAccount: null, emails: [], folders: [], selectedEmail: null });
+      set({ selectedAccount: null, emails: [], folders: [], selectedEmail: null, connectedAccounts: connected });
+    } else {
+      set({ connectedAccounts: connected });
     }
     await get().loadAccounts();
   },
@@ -133,12 +139,17 @@ export const useAppStore = create<AppState>((set, get) => ({
       let settings = await call("getImapSettings", { email });
       if (!settings) settings = { host: account.imap_host, port: account.imap_port, secure: account.use_ssl };
       await call("connect", { email, password: account.password, ...settings });
+      const connected = new Set(get().connectedAccounts);
+      connected.add(email);
+      set({ connectedAccounts: connected });
       const folders = await call("fetchFolders", { email });
       set({ folders });
       const emails = await call("fetchEmails", { email, folder: "INBOX", limit: 50 });
       set({ emails, loading: false });
     } catch (e: any) {
-      set({ error: e.message, loading: false });
+      const connected = new Set(get().connectedAccounts);
+      connected.delete(email);
+      set({ error: e.message, loading: false, connectedAccounts: connected });
     }
   },
 
