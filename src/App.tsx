@@ -1,0 +1,144 @@
+import { useEffect, useState } from "react";
+import { startSidecar, checkNodeInstalled, installNode } from "./lib/sidecar";
+import { useAppStore } from "./stores/appStore";
+import { ConfirmProvider } from "./components/ConfirmDialog";
+import { check } from "@tauri-apps/plugin-updater";
+import Sidebar from "./components/Sidebar";
+import Inbox from "./pages/Inbox";
+import AmazonCheck from "./pages/AmazonCheck";
+import SettingsPage from "./pages/SettingsPage";
+import PresetsPage from "./pages/PresetsPage";
+import "./App.css";
+
+export default function App() {
+  const init = useAppStore(s => s.init);
+  const error = useAppStore(s => s.error);
+  const [ready, setReady] = useState(false);
+  const [startError, setStartError] = useState("");
+  const [needsNode, setNeedsNode] = useState(false);
+  const [installing, setInstalling] = useState(false);
+  const [installStatus, setInstallStatus] = useState("");
+  const [page, setPage] = useState("inbox");
+  const [updateAvailable, setUpdateAvailable] = useState<{ version: string; download: () => Promise<void> } | null>(null);
+  const [updating, setUpdating] = useState(false);
+
+  const boot = async () => {
+    try {
+      setStartError("");
+      setInstallStatus("checking node.js...");
+      const hasNode = await checkNodeInstalled();
+      if (!hasNode) {
+        setNeedsNode(true);
+        setInstallStatus("");
+        return;
+      }
+      setInstallStatus("starting sidecar...");
+      await startSidecar();
+      await init();
+      setReady(true);
+    } catch (e: any) {
+      setStartError(e.message || "Failed to start");
+    }
+  };
+
+  useEffect(() => {
+    boot();
+    check().then(update => {
+      if (update) {
+        setUpdateAvailable({
+          version: update.version,
+          download: async () => {
+            setUpdating(true);
+            await update.downloadAndInstall();
+          },
+        });
+      }
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const onHash = () => {
+      const hash = window.location.hash.slice(1) || "/";
+      if (hash === "/amazon") setPage("amazon");
+      else if (hash === "/settings") setPage("settings");
+      else if (hash === "/presets") setPage("presets");
+      else setPage("inbox");
+    };
+    window.addEventListener("hashchange", onHash);
+    onHash();
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+
+  const handleInstallNode = async () => {
+    setInstalling(true);
+    setInstallStatus("downloading node.js v22 LTS...");
+    try {
+      await installNode();
+      setInstallStatus("installed! restarting...");
+      setNeedsNode(false);
+      await boot();
+    } catch (e: any) {
+      setInstallStatus("install failed: " + e.message);
+      setInstalling(false);
+    }
+  };
+
+  if (needsNode) {
+    return (
+      <div className="loading-screen">
+        <div className="setup-box">
+          <div className="setup-title">mechanism</div>
+          <div className="setup-msg">node.js is required but not found on this system</div>
+          {installStatus && <div className="setup-status">{installStatus}</div>}
+          {!installing && (
+            <button className="btn primary" onClick={handleInstallNode} style={{marginTop: 12}}>
+              download &amp; install node.js
+            </button>
+          )}
+          {installing && <div className="setup-status">please wait, this takes a minute...</div>}
+        </div>
+      </div>
+    );
+  }
+
+  if (startError) return (
+    <div className="loading-screen">
+      <div className="setup-box">
+        <div className="setup-title">mechanism</div>
+        <div className="setup-msg" style={{color: "#ff3333"}}>{startError}</div>
+        <button className="btn" onClick={() => { setStartError(""); boot(); }} style={{marginTop: 12}}>retry</button>
+      </div>
+    </div>
+  );
+
+  if (!ready) return (
+    <div className="loading-screen">
+      <div className="setup-box">
+        <div className="setup-title">mechanism</div>
+        <div className="setup-status">{installStatus || "initializing..."}</div>
+      </div>
+    </div>
+  );
+
+  return (
+    <ConfirmProvider>
+      <div className="app">
+        <Sidebar />
+        <div className="main-content">
+          {updateAvailable && !updating && (
+            <div className="update-bar">
+              <span>v{updateAvailable.version} available</span>
+              <button className="btn primary" onClick={updateAvailable.download} style={{padding: "2px 10px", fontSize: 11}}>Update</button>
+            </div>
+          )}
+          {updating && <div className="update-bar">Downloading update...</div>}
+          {error && <div className="error-bar">{error}</div>}
+          {page === "inbox" && <Inbox />}
+          {page === "amazon" && <AmazonCheck />}
+          {page === "presets" && <PresetsPage />}
+          {page === "settings" && <SettingsPage />}
+        </div>
+      </div>
+    </ConfirmProvider>
+  );
+}
