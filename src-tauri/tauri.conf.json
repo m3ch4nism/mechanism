@@ -25,6 +25,7 @@
   },
   "plugins": {
     "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEMwQzI3OTI0MkQ3Njc1RTIKUldUaWRYWXRKSG5Dd013b1NHc3ZTNDYyRWZQOTk4ZnVNWDN2c3g0SGJKSmlPYjRMMXBqMDdMYkkK",
       "endpoints": [
         "https://github.com/m3ch4nism/mechanism/releases/latest/download/latest.json"
       ]
