@@ -184,6 +184,14 @@ export function getPresets() {
   }));
 }
 
+export function updatePreset(id, name, sender, subject, bodyText, folder, daysBack) {
+  const d = getDb();
+  d.run("UPDATE search_presets SET name=?, sender=?, subject=?, body_text=?, folder=?, days_back=? WHERE id=?",
+    [name, sender || null, subject || null, bodyText || null, folder || "INBOX", daysBack || 30, id]);
+  save();
+  return true;
+}
+
 export function removePreset(id) {
   const d = getDb();
   d.run("DELETE FROM search_presets WHERE id = ?", [id]);

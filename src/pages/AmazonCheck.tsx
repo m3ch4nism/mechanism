@@ -1,5 +1,5 @@
 import { useAppStore } from "../stores/appStore";
-import { Loader2, X, Copy, Download } from "lucide-react";
+import { Loader2, X, Copy, Download, FileText } from "lucide-react";
 import { useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
@@ -92,8 +92,22 @@ export default function AmazonCheck() {
                 filters: [{ name: "Text", extensions: ["txt"] }],
               });
               if (path) await writeTextFile(path, reportToText(amazonReport));
-            }} title="Export .txt">
+            }} title="Export report">
               <Download size={14} /> .txt
+            </button>
+            <button className="btn" onClick={async () => {
+              const src = amazonReport.sourceEmails || [];
+              if (!src.length) return;
+              const lines = src.map((e: any) =>
+                `[${e.section}] UID:${e.uid}\nFrom: ${e.sender}\nDate: ${e.date}\nSubject: ${e.subject}\n\n${e.bodyText || "(no text)"}\n${"=".repeat(80)}`
+              );
+              const path = await save({
+                defaultPath: `${amazonReport.email}-raw-${new Date().toISOString().slice(0, 10)}.txt`,
+                filters: [{ name: "Text", extensions: ["txt"] }],
+              });
+              if (path) await writeTextFile(path, lines.join("\n\n"));
+            }} title="Export raw source emails">
+              <FileText size={14} /> raw
             </button>
           </>
         )}

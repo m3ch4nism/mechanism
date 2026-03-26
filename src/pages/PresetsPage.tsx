@@ -1,12 +1,15 @@
 import { useAppStore, type SearchPreset, type Email } from "../stores/appStore";
 import { useConfirm } from "../components/ConfirmDialog";
-import { Filter, Plus, Trash2, Play, Loader2, Download, ArrowLeft } from "lucide-react";
+import { Filter, Plus, Trash2, Play, Loader2, Download, ArrowLeft, Pencil } from "lucide-react";
 import { useState } from "react";
+import { save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { writeTextFile } from "@tauri-apps/plugin-fs";
 
 export default function PresetsPage() {
   const { accounts, presets, presetResults, presetLoading, removePreset, runPreset, error } = useAppStore();
   const confirm = useConfirm();
   const [showAdd, setShowAdd] = useState(false);
+  const [editPreset, setEditPreset] = useState<SearchPreset | null>(null);
   const [selectedAccount, setSelectedAccount] = useState(accounts[0]?.email || "");
   const [activePreset, setActivePreset] = useState<SearchPreset | null>(null);
 
@@ -15,7 +18,6 @@ export default function PresetsPage() {
     if (selectedAccount) runPreset(selectedAccount, preset);
   };
 
-  // If we have results, show email client view
   if (activePreset && presetResults !== null && !presetLoading) {
     return <PresetMailView
       preset={activePreset}
@@ -50,12 +52,15 @@ export default function PresetsPage() {
                 {p.sender && <span className="tag">From: {p.sender}</span>}
                 {p.subject && <span className="tag">Subj: {p.subject}</span>}
                 {p.bodyText && <span className="tag">Text: {p.bodyText}</span>}
-                <span className="tag">{p.folder} / {p.daysBack}d</span>
+                <span className="tag">{p.folder === "*" ? "ALL FOLDERS" : p.folder} / {p.daysBack}d</span>
               </div>
             </div>
             <div className="preset-actions">
               <button className="btn primary" onClick={() => handleRun(p)} disabled={presetLoading || !selectedAccount}>
                 <Play size={14} />
+              </button>
+              <button className="btn" onClick={() => setEditPreset(p)} title="Edit">
+                <Pencil size={14} />
               </button>
               <button className="btn danger" onClick={async () => { if (await confirm(`Delete preset "${p.name}"?`)) removePreset(p.id); }}>
                 <Trash2 size={14} />
@@ -66,7 +71,8 @@ export default function PresetsPage() {
       </div>
 
       {error && <div className="error">{error}</div>}
-      {showAdd && <AddPresetModal onClose={() => setShowAdd(false)} />}
+      {showAdd && <PresetModal onClose={() => setShowAdd(false)} />}
+      {editPreset && <PresetModal preset={editPreset} onClose={() => setEditPreset(null)} />}
     </div>
   );
 }
@@ -82,18 +88,16 @@ function PresetMailView({ preset, emails, onBack }: { preset: SearchPreset; emai
       })
     : emails;
 
-  const handleExport = () => {
+  const handleExport = async () => {
     if (!filteredEmails.length) return;
     const lines = filteredEmails.map(e =>
       `From: ${e.sender}\nDate: ${e.date}\nSubject: ${e.subject}\n\n${e.bodyText || "(no text)"}\n${"=".repeat(60)}`
     );
-    const blob = new Blob([lines.join("\n\n")], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${preset.name}-${new Date().toISOString().slice(0, 10)}.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
+    const path = await saveDialog({
+      defaultPath: `${preset.name}-${new Date().toISOString().slice(0, 10)}.txt`,
+      filters: [{ name: "Text", extensions: ["txt"] }],
+    });
+    if (path) await writeTextFile(path, lines.join("\n\n"));
   };
 
   return (
@@ -154,36 +158,50 @@ function PresetMailView({ preset, emails, onBack }: { preset: SearchPreset; emai
   );
 }
 
-function AddPresetModal({ onClose }: { onClose: () => void }) {
-  const { addPreset } = useAppStore();
-  const [name, setName] = useState("");
-  const [sender, setSender] = useState("");
-  const [subject, setSubject] = useState("");
-  const [bodyText, setBodyText] = useState("");
-  const [folder, setFolder] = useState("INBOX");
-  const [daysBack, setDaysBack] = useState("30");
+function PresetModal({ preset, onClose }: { preset?: SearchPreset; onClose: () => void }) {
+  const { addPreset, updatePreset } = useAppStore();
+  const isEdit = !!preset;
+  const [name, setName] = useState(preset?.name || "");
+  const [sender, setSender] = useState(preset?.sender || "");
+  const [subject, setSubject] = useState(preset?.subject || "");
+  const [bodyText, setBodyText] = useState(preset?.bodyText || "");
+  const [folder, setFolder] = useState(preset?.folder || "INBOX");
+  const [daysBack, setDaysBack] = useState(String(preset?.daysBack || 30));
 
   const handleSubmit = async () => {
     if (!name.trim()) return;
-    await addPreset({ name: name.trim(), sender: sender || null, subject: subject || null, bodyText: bodyText || null, folder, daysBack: parseInt(daysBack) || 30 });
+    const data = { name: name.trim(), sender: sender || null, subject: subject || null, bodyText: bodyText || null, folder, daysBack: parseInt(daysBack) || 30 };
+    if (isEdit && preset) {
+      await updatePreset({ ...data, id: preset.id });
+    } else {
+      await addPreset(data);
+    }
     onClose();
   };
 
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={e => e.stopPropagation()}>
-        <h3>New Search Preset</h3>
+        <h3>{isEdit ? "Edit Preset" : "New Search Preset"}</h3>
         <input placeholder="Preset name" value={name} onChange={e => setName(e.target.value)} />
-        <input placeholder="Sender email includes..." value={sender} onChange={e => setSender(e.target.value)} />
+        <input placeholder="Sender (comma-separated for multiple)" value={sender} onChange={e => setSender(e.target.value)} />
         <input placeholder="Subject contains..." value={subject} onChange={e => setSubject(e.target.value)} />
         <input placeholder="Body text contains..." value={bodyText} onChange={e => setBodyText(e.target.value)} />
         <div className="row">
-          <input placeholder="Folder" value={folder} onChange={e => setFolder(e.target.value)} style={{ flex: 1 }} />
+          <select value={folder} onChange={e => setFolder(e.target.value)} style={{ flex: 1 }}>
+            <option value="INBOX">INBOX</option>
+            <option value="*">ALL FOLDERS</option>
+            <option value="Sent">Sent</option>
+            <option value="Drafts">Drafts</option>
+            <option value="Trash">Trash</option>
+            <option value="Spam">Spam</option>
+            <option value="Junk">Junk</option>
+          </select>
           <input placeholder="Days back" value={daysBack} onChange={e => setDaysBack(e.target.value)} style={{ width: 80 }} />
         </div>
-        <div className="hint">At least one filter (sender, subject, or body) required.</div>
+        <div className="hint">Sender: use commas for multiple (walmart,target,shopify). Folder: * = all folders.</div>
         <div className="row">
-          <button className="btn primary" onClick={handleSubmit} disabled={!name.trim() || (!sender && !subject && !bodyText)}>Create</button>
+          <button className="btn primary" onClick={handleSubmit} disabled={!name.trim() || (!sender && !subject && !bodyText)}>{isEdit ? "Save" : "Create"}</button>
           <button className="btn" onClick={onClose}>Cancel</button>
         </div>
       </div>

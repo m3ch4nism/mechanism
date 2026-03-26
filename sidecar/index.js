@@ -31,7 +31,7 @@ import {
   setSetting, getSetting, deleteSetting,
   addCustomImap, getCustomImap, getAllCustomImap,
   cacheEmails, getCachedEmails,
-  addPreset, getPresets, removePreset,
+  addPreset, updatePreset, getPresets, removePreset,
   saveCheckHistory, getCheckHistory,
 } from "./db.js";
 import {
@@ -125,15 +125,33 @@ async function handleRequest(req) {
       }
 
       case "fetchFolders": {
-        const c = clients[params.email];
-        if (!c) throw new Error("Not connected");
+        let c = clients[params.email];
+        if (!c) {
+          const account = getAccounts().find(a => a.email === params.email);
+          if (!account) throw new Error("Account not found");
+          const customs = getAllCustomImap();
+          const settings = getImapSettings(params.email, customs) || { host: account.imap_host, port: account.imap_port, secure: !!account.use_ssl };
+          const proxy = getSetting("proxy");
+          c = await connectImap(params.email, account.password, settings, proxy);
+          clients[params.email] = c;
+        }
         result = await fetchFolders(c);
         break;
       }
 
       case "fetchEmails": {
-        const c = clients[params.email];
-        if (!c) throw new Error("Not connected");
+        let c = clients[params.email];
+        if (!c) {
+          // Auto-reconnect
+          const account = getAccounts().find(a => a.email === params.email);
+          if (!account) throw new Error("Account not found");
+          const customs = getAllCustomImap();
+          const settings = getImapSettings(params.email, customs) || { host: account.imap_host, port: account.imap_port, secure: !!account.use_ssl };
+          const proxy = getSetting("proxy");
+          c = await connectImap(params.email, account.password, settings, proxy);
+          clients[params.email] = c;
+          log("INFO", `auto-reconnected ${params.email}`);
+        }
         const emails = await fetchEmails(c, params.folder || "INBOX", params.limit || 50);
         cacheEmails(params.email, params.folder || "INBOX", emails);
         result = emails;
@@ -141,8 +159,16 @@ async function handleRequest(req) {
       }
 
       case "searchEmails": {
-        const c = clients[params.email];
-        if (!c) throw new Error("Not connected");
+        let c = clients[params.email];
+        if (!c) {
+          const account = getAccounts().find(a => a.email === params.email);
+          if (!account) throw new Error("Account not found");
+          const customs = getAllCustomImap();
+          const settings = getImapSettings(params.email, customs) || { host: account.imap_host, port: account.imap_port, secure: !!account.use_ssl };
+          const proxy = getSetting("proxy");
+          c = await connectImap(params.email, account.password, settings, proxy);
+          clients[params.email] = c;
+        }
         result = await searchEmails(c, params.folder || "INBOX", params.criteria || {}, params.limit || 50);
         break;
       }
@@ -228,6 +254,10 @@ async function handleRequest(req) {
         result = getPresets();
         break;
 
+      case "updatePreset":
+        result = updatePreset(params.id, params.name, params.sender, params.subject, params.bodyText, params.folder, params.daysBack);
+        break;
+
       case "removePreset":
         result = removePreset(params.id);
         break;
@@ -242,18 +272,37 @@ async function handleRequest(req) {
           needClose = true;
         }
         try {
-          const criteria = {};
-          if (preset.sender) criteria.from = preset.sender;
-          if (preset.subject) criteria.subject = preset.subject;
-          if (preset.bodyText) criteria.body = preset.bodyText;
-          if (preset.daysBack) {
-            const since = new Date();
-            since.setDate(since.getDate() - preset.daysBack);
-            criteria.since = since;
+          const senders = preset.sender ? preset.sender.split(",").map(s => s.trim()).filter(Boolean) : [];
+          const folders = preset.folder === "*" ? (await fetchFolders(client)).map(f => f.path) : [preset.folder || "INBOX"];
+          const allResults = [];
+          const seenUids = new Set();
+          for (const folder of folders) {
+            const senderList = senders.length ? senders : [null];
+            for (const sender of senderList) {
+              const criteria = {};
+              if (sender) criteria.from = sender;
+              if (preset.subject) criteria.subject = preset.subject;
+              if (preset.bodyText) criteria.body = preset.bodyText;
+              if (preset.daysBack) {
+                const since = new Date();
+                since.setDate(since.getDate() - preset.daysBack);
+                criteria.since = since;
+              }
+              log("INFO", `runPreset "${preset.name}" folder=${folder} sender=${sender || "*"} criteria=${JSON.stringify(criteria)}`);
+              try {
+                const msgs = await searchEmails(client, folder, criteria, 100);
+                for (const m of msgs) {
+                  const key = `${folder}:${m.uid}`;
+                  if (!seenUids.has(key)) { seenUids.add(key); allResults.push({ ...m, folder }); }
+                }
+              } catch (e) {
+                log("ERROR", `runPreset folder=${folder}: ${e.message}`);
+              }
+            }
           }
-          log("INFO", `runPreset "${preset.name}" folder=${preset.folder || "INBOX"} criteria=${JSON.stringify(criteria)}`);
-          result = await searchEmails(client, preset.folder || "INBOX", criteria, 100);
-          log("INFO", `runPreset "${preset.name}" found ${result.length} emails`);
+          allResults.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+          result = allResults.slice(0, 200);
+          log("INFO", `runPreset "${preset.name}" total ${result.length} emails`);
         } finally {
           if (needClose) { try { await client.logout(); } catch {} }
         }

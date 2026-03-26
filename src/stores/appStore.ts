@@ -74,6 +74,7 @@ interface AppState {
   refreshEmails: () => Promise<void>;
   loadPresets: () => Promise<void>;
   addPreset: (preset: Omit<SearchPreset, "id">) => Promise<void>;
+  updatePreset: (preset: SearchPreset) => Promise<void>;
   removePreset: (id: number) => Promise<void>;
   runPreset: (email: string, preset: SearchPreset) => Promise<void>;
 }
@@ -212,6 +213,11 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   addPreset: async (preset) => {
     await call("addPreset", preset);
+    await get().loadPresets();
+  },
+
+  updatePreset: async (preset) => {
+    await call("updatePreset", preset);
     await get().loadPresets();
   },
 
