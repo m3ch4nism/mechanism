@@ -6,6 +6,13 @@ let requestId = 0;
 const pending = new Map<number, { resolve: (v: any) => void; reject: (e: any) => void }>();
 let buffer = "";
 
+type PushHandler = (data: any) => void;
+const pushHandlers: PushHandler[] = [];
+export function onPush(handler: PushHandler) {
+  pushHandlers.push(handler);
+  return () => { const i = pushHandlers.indexOf(handler); if (i >= 0) pushHandlers.splice(i, 1); };
+}
+
 export async function checkNodeInstalled(): Promise<boolean> {
   try {
     const cmd = Command.create("node", ["--version"]);
@@ -93,6 +100,10 @@ export async function startSidecar() {
       if (!l.trim()) continue;
       try {
         const msg = JSON.parse(l);
+        if (msg.id === 0 && msg.push) {
+          for (const h of pushHandlers) { try { h(msg.push); } catch {} }
+          continue;
+        }
         const p = pending.get(msg.id);
         if (p) {
           pending.delete(msg.id);

@@ -53,6 +53,7 @@ interface AppState {
   selectedEmail: Email | null;
   proxy: string | null;
   connectedAccounts: Set<string>;
+  failedAccounts: Set<string>;
   loading: boolean;
   error: string | null;
   amazonReport: AmazonReport | null;
@@ -77,6 +78,8 @@ interface AppState {
   updatePreset: (preset: SearchPreset) => Promise<void>;
   removePreset: (id: number) => Promise<void>;
   runPreset: (email: string, preset: SearchPreset) => Promise<void>;
+  verifyAccounts: () => Promise<void>;
+  deleteEmails: (uids: string[]) => Promise<void>;
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -88,6 +91,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   selectedEmail: null,
   proxy: null,
   connectedAccounts: new Set<string>(),
+  failedAccounts: new Set<string>(),
   loading: false,
   error: null,
   amazonReport: null,
@@ -102,6 +106,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       await get().loadAccounts();
       await get().loadProxy();
       await get().loadPresets();
+      // Auto-verify all accounts in background
+      get().verifyAccounts();
     } catch (e: any) {
       set({ error: e.message });
     }
@@ -142,7 +148,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       await call("connect", { email, password: account.password, ...settings });
       const connected = new Set(get().connectedAccounts);
       connected.add(email);
-      set({ connectedAccounts: connected });
+      const failed = new Set(get().failedAccounts);
+      failed.delete(email);
+      set({ connectedAccounts: connected, failedAccounts: failed });
       const folders = await call("fetchFolders", { email });
       set({ folders });
       const emails = await call("fetchEmails", { email, folder: "INBOX", limit: 50 });
@@ -150,7 +158,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     } catch (e: any) {
       const connected = new Set(get().connectedAccounts);
       connected.delete(email);
-      set({ error: e.message, loading: false, connectedAccounts: connected });
+      const failed = new Set(get().failedAccounts);
+      failed.add(email);
+      set({ error: e.message, loading: false, connectedAccounts: connected, failedAccounts: failed });
     }
   },
 
@@ -224,6 +234,40 @@ export const useAppStore = create<AppState>((set, get) => ({
   removePreset: async (id) => {
     await call("removePreset", { id });
     await get().loadPresets();
+  },
+
+  verifyAccounts: async () => {
+    const accounts = get().accounts;
+    if (!accounts.length) return;
+    for (const acc of accounts) {
+      try {
+        let settings = await call("getImapSettings", { email: acc.email });
+        if (!settings) settings = { host: acc.imap_host, port: acc.imap_port, secure: acc.use_ssl };
+        const res = await call("verifyAccount", { email: acc.email, password: acc.password, ...settings });
+        const connected = new Set(get().connectedAccounts);
+        const failed = new Set(get().failedAccounts);
+        if (res.status === "ok") {
+          connected.add(acc.email);
+          failed.delete(acc.email);
+        } else {
+          connected.delete(acc.email);
+          failed.add(acc.email);
+        }
+        set({ connectedAccounts: connected, failedAccounts: failed });
+      } catch {
+        const failed = new Set(get().failedAccounts);
+        failed.add(acc.email);
+        set({ failedAccounts: failed });
+      }
+    }
+  },
+
+  deleteEmails: async (uids) => {
+    const { selectedAccount, selectedFolder } = get();
+    if (!selectedAccount || !uids.length) return;
+    await call("deleteEmails", { email: selectedAccount, folder: selectedFolder, uids });
+    // Refresh email list after deletion
+    await get().refreshEmails();
   },
 
   runPreset: async (email, preset) => {

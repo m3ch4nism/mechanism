@@ -4,7 +4,7 @@ import { Plus, Trash2, Settings, ShieldCheck, FolderOpen, Filter, Loader2 } from
 import { useState } from "react";
 
 export default function Sidebar() {
-  const { accounts, selectedAccount, folders, selectedFolder, selectAccount, selectFolder, removeAccount, connectedAccounts } = useAppStore();
+  const { accounts, selectedAccount, folders, selectedFolder, selectAccount, selectFolder, removeAccount, connectedAccounts, failedAccounts } = useAppStore();
   const confirm = useConfirm();
   const [showAdd, setShowAdd] = useState(false);
 
@@ -28,7 +28,7 @@ export default function Sidebar() {
             className={`sidebar-item ${selectedAccount === acc.email ? "active" : ""}`}
             onClick={() => { window.location.hash = "/"; selectAccount(acc.email); }}
           >
-            <span style={{width: 6, height: 6, borderRadius: "50%", background: connectedAccounts.has(acc.email) ? "var(--success)" : "var(--text-dim)", flexShrink: 0}} />
+            <span style={{width: 6, height: 6, borderRadius: "50%", background: connectedAccounts.has(acc.email) ? "var(--success)" : failedAccounts.has(acc.email) ? "var(--error)" : "var(--text-dim)", flexShrink: 0}} />
             <span className="truncate">{acc.email}</span>
             <button
               className="icon-btn delete-btn"

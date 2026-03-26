@@ -35,13 +35,73 @@ import {
   saveCheckHistory, getCheckHistory,
 } from "./db.js";
 import {
-  connectImap, fetchFolders, fetchEmails, searchEmails, getImapSettings, testProxy,
+  connectImap, fetchFolders, fetchEmails, searchEmails, deleteEmails, getImapSettings, testProxy,
 } from "./imap.js";
 import { runAmazonCheck } from "./amazon.js";
 
 const clients = {};
+const idleWatchers = {};
 let initDone = false;
 let initPromise = null;
+
+function pushNotification(data) {
+  const msg = JSON.stringify({ id: 0, push: data });
+  process.stdout.write(msg + "\n");
+}
+
+function startIdleWatch(email, client) {
+  if (idleWatchers[email]) return;
+  idleWatchers[email] = true;
+  client.on("exists", async (data) => {
+    log("INFO", `IDLE: new mail in ${email} (${data.path}, count: ${data.count})`);
+    let subject = "New email";
+    let sender = "";
+    try {
+      const lock = await client.getMailboxLock(data.path);
+      try {
+        const total = client.mailbox.exists;
+        if (total > 0) {
+          for await (const msg of client.fetch(`${total}:${total}`, { uid: true, envelope: true })) {
+            subject = msg.envelope?.subject || "New email";
+            sender = msg.envelope?.from?.[0]?.address || "";
+          }
+        }
+      } finally { lock.release(); }
+    } catch (e) {
+      log("ERROR", `IDLE fetch preview: ${e.message}`);
+    }
+    pushNotification({ type: "newMail", email, folder: data.path, subject, sender });
+  });
+  const reconnect = async () => {
+    delete idleWatchers[email];
+    delete clients[email];
+    log("INFO", `IDLE: reconnecting ${email}...`);
+    try {
+      const account = getAccounts().find(a => a.email === email);
+      if (!account) return;
+      const customs = getAllCustomImap();
+      const settings = getImapSettings(email, customs) || { host: account.imap_host, port: account.imap_port, secure: !!account.use_ssl };
+      const proxy = getSetting("proxy");
+      const newClient = await connectImap(email, account.password, settings, proxy);
+      clients[email] = newClient;
+      startIdleWatch(email, newClient);
+      log("INFO", `IDLE: reconnected ${email}`);
+    } catch (e) {
+      log("ERROR", `IDLE: reconnect failed for ${email}: ${e.message}`);
+      // Retry in 30 seconds
+      setTimeout(() => reconnect(), 30000);
+    }
+  };
+  client.on("close", () => {
+    log("INFO", `IDLE: connection closed for ${email}`);
+    reconnect();
+  });
+  client.on("error", (err) => {
+    log("ERROR", `IDLE: error for ${email}: ${err.message}`);
+    // close event will fire after error, triggering reconnect
+  });
+  log("INFO", `IDLE: watching ${email}`);
+}
 
 const rl = readline.createInterface({ input: process.stdin });
 
@@ -113,6 +173,7 @@ async function handleRequest(req) {
         const proxy = getSetting("proxy");
         const client = await connectImap(email, password, { host, port, secure }, proxy);
         clients[email] = client;
+        startIdleWatch(email, client);
         result = { connected: true };
         break;
       }
@@ -121,6 +182,20 @@ async function handleRequest(req) {
         const c = clients[params.email];
         if (c) { await c.logout(); delete clients[params.email]; }
         result = { disconnected: true };
+        break;
+      }
+
+      case "verifyAccount": {
+        const { email, password, host, port, secure } = params;
+        const proxy = getSetting("proxy");
+        try {
+          const client = await connectImap(email, password, { host, port, secure }, proxy);
+          clients[email] = client;
+          startIdleWatch(email, client);
+          result = { status: "ok" };
+        } catch (e) {
+          result = { status: "error", error: e.message };
+        }
         break;
       }
 
@@ -155,6 +230,21 @@ async function handleRequest(req) {
         const emails = await fetchEmails(c, params.folder || "INBOX", params.limit || 50);
         cacheEmails(params.email, params.folder || "INBOX", emails);
         result = emails;
+        break;
+      }
+
+      case "deleteEmails": {
+        let c = clients[params.email];
+        if (!c) {
+          const account = getAccounts().find(a => a.email === params.email);
+          if (!account) throw new Error("Account not found");
+          const customs = getAllCustomImap();
+          const settings = getImapSettings(params.email, customs) || { host: account.imap_host, port: account.imap_port, secure: !!account.use_ssl };
+          const proxy = getSetting("proxy");
+          c = await connectImap(params.email, account.password, settings, proxy);
+          clients[params.email] = c;
+        }
+        result = await deleteEmails(c, params.folder || "INBOX", params.uids);
         break;
       }
 

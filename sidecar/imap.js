@@ -256,6 +256,17 @@ export async function fetchRawBySearch(client, searchQuery, limit = 50) {
   }
 }
 
+export async function deleteEmails(client, folder, uids) {
+  const lock = await client.getMailboxLock(folder);
+  try {
+    const uidList = uids.map(u => typeof u === "string" ? parseInt(u) : u);
+    await client.messageDelete(uidList, { uid: true });
+    return { deleted: uidList.length };
+  } finally {
+    lock.release();
+  }
+}
+
 export async function testProxy(proxyStr) {
   const directIp = await getExternalIp(null);
   const proxy = parseProxy(proxyStr);

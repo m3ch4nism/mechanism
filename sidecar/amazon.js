@@ -172,8 +172,9 @@ async function extractCards(client, report) {
         }
       }
     }
-    // Also scan for card type mentions (catches "appear on your Visa" etc)
+    // Also scan for card type mentions (catches "appear on your Visa", "MasterCard Credit Card: $X" etc)
     {
+      const PAY_CARD_PAT = /(Visa|MasterCard|Master\s*Card|AmericanExpress|American\s*Express|Amex|Discover|Diners|Amazon\s*(?:Store|Prime|\.com)\s*(?:Credit\s+)?Card)\s+Credit\s+Card/gi;
       const existingTypes = new Set(Object.values(cardsByLast4).map(c => c.type));
       for (const raw of [...returnRaws, ...payRaws]) {
         const p = await parseRaw(raw);
@@ -186,6 +187,29 @@ async function extractCards(client, report) {
             existingTypes.add(ctype);
             cardsByLast4[`mention_${ctype}`] = { last4: "????", type: ctype, expiry: "" };
           }
+        }
+        PAY_CARD_PAT.lastIndex = 0;
+        while ((m = PAY_CARD_PAT.exec(body)) !== null) {
+          const ctype = normalizeCardType(m[1]);
+          if (ctype && !existingTypes.has(ctype)) {
+            existingTypes.add(ctype);
+            cardsByLast4[`mention_${ctype}`] = { last4: "????", type: ctype, expiry: "" };
+          }
+        }
+        // Fallback: match "TYPE Credit Card: $AMOUNT" lines directly (no prefix required)
+        const DIRECT_CARD_PAT = /^\s*(Visa|MasterCard|Master\s*Card|Amex|American\s*Express|Discover)\s+Credit\s+Card\s*:/gim;
+        DIRECT_CARD_PAT.lastIndex = 0;
+        while ((m = DIRECT_CARD_PAT.exec(body)) !== null) {
+          const ctype = normalizeCardType(m[1]);
+          if (ctype && !existingTypes.has(ctype)) {
+            existingTypes.add(ctype);
+            cardsByLast4[`mention_${ctype}`] = { last4: "????", type: ctype, expiry: "" };
+          }
+        }
+        // Also catch "Gift Card: $X" pattern
+        if (/Gift\s+Card:\s+\$/i.test(body) && !existingTypes.has("Gift Card")) {
+          existingTypes.add("Gift Card");
+          cardsByLast4["mention_GiftCard"] = { last4: "----", type: "Gift Card", expiry: "" };
         }
       }
     }
@@ -286,28 +310,94 @@ async function extractOrders(client, report) {
 
 async function extractSubscribeSave(client, report) {
   try {
-    const raws = await imapSearch(client, { from: "no-reply@amazon.com", body: "Subscribe" }, 30, report, "S&S");
+    const raws = await imapSearch(client, { from: "no-reply@amazon.com", body: "Subscribe & Save" }, 50, report, "S&S");
     const allItems = new Set();
     for (const raw of raws) {
       const p = await parseRaw(raw);
       const body = getTextBody(p);
-      if (!/subscribe/i.test(body.slice(0, 500)) && !/subscribe/i.test(p.subject)) continue;
-      if (/subscribe & save/i.test(body.slice(0, 500)) || /auto-delivery/i.test(body.slice(0, 500))) {
-        // S&S email -- extract items
-        const lines = body.split("\n");
+      const subj = p.subject || "";
+      if (!/subscribe/i.test(body.slice(0, 800)) && !/subscribe/i.test(subj) && !/auto-delivery/i.test(subj)) continue;
+      // Skip non-S&S emails (reviews, digital subs)
+      if (/did your recent|review it on|will you rate|your opinion matters/i.test(subj)) continue;
+      if (/Paramount|Prime Video|HBO|Audible|Kindle Unlimited|Starz|Showtime/i.test(subj)) continue;
+
+      // Method 1: old format -- "N unit(s) every N month(s)" with product name on previous line
+      const lines = body.split("\n");
+      for (let i = 0; i < lines.length; i++) {
+        if (/^\d+ unit(?:s)? every \d+ (?:month|week|day)/i.test(lines[i].trim())) {
+          if (i > 0) {
+            let name = lines[i - 1].trim().replace(/\.{2,}$/, "").trim();
+            if (name && name.length > 5 && !/^(Price|Save|Manage|Order|Arriving|Estimated|Subtotal|Shipping|Payment|Last|Delivering)/i.test(name)) {
+              allItems.add(name);
+            }
+          }
+        }
+      }
+
+      // Method 2: "ITEM N\nPRODUCT NAME\n\nQUANTITY:" format
+      for (let i = 0; i < lines.length; i++) {
+        if (/^ITEM\s+\d+$/i.test(lines[i].trim())) {
+          const next = (lines[i + 1] || "").trim();
+          if (next && next.length > 5 && !/^QUANTITY|^ITEM PRICE|^\$/i.test(next)) {
+            allItems.add(next.replace(/\.{2,}$/, "").trim());
+          }
+        }
+      }
+
+      // Method 3: new HTML format -- product links to /dp/ with nearby text
+      if (p.html) {
+        const $ = cheerio.load(p.html);
+        $("a").each((_, el) => {
+          const href = $(el).attr("href") || "";
+          if (/\/dp\/[A-Z0-9]{10}/i.test(href) && !/ref=_sns_ryd_rec|ref=_em_rd_st/i.test(href)) {
+            const text = $(el).text().trim().replace(/\.{2,}$/, "").trim();
+            if (text && text.length > 10 && text.length < 200 && !/^(Shop|Learn|Manage|View|See|Save|Subscribe)/i.test(text)) {
+              allItems.add(text);
+            }
+          }
+        });
+      }
+
+      // Method 4: "Your new subscription" -- extract product from body
+      if (/your new subscription/i.test(subj)) {
         for (let i = 0; i < lines.length; i++) {
-          if (/^\d+ unit(?:s)? every \d+ (?:month|week|day)/i.test(lines[i].trim())) {
-            if (i > 0) {
-              let name = lines[i - 1].trim().replace(/\.{2,}$/, "").trim();
-              if (name && name.length > 5 && !/^(Price|Save|Manage|Order|Arriving)/i.test(name)) {
-                allItems.add(name);
+          if (/^(Monthly|Every \d+ month|Weekly)/i.test(lines[i].trim())) {
+            for (let j = i - 1; j >= Math.max(0, i - 3); j--) {
+              const candidate = lines[j].trim().replace(/\.{2,}$/, "").trim();
+              if (candidate && candidate.length > 10 && !/^(SHIP TO|Manage|Ship to|Subscription)/i.test(candidate)) {
+                allItems.add(candidate);
+                break;
               }
             }
           }
         }
       }
+
+      // Method 5: "ITEMS" section header (plural, no number) followed by product name
+      for (let i = 0; i < lines.length; i++) {
+        if (/^ITEMS$/i.test(lines[i].trim())) {
+          const next = (lines[i + 1] || "").trim();
+          if (next && next.length > 5 && !/^(SHIP|ESTIMATED|Subtotal|Manage|http|---|PENDING|APPROVED|NOT IN|IN THIS)/i.test(next)) {
+            allItems.add(next.replace(/\.{2,}$/, "").trim());
+          }
+        }
+      }
+
+      // Method 6: "Subscription Details" format (2024+) -- product name with dp/ link in text
+      if (/Subscription Details|thank you for setting up.*auto-delivery/i.test(body)) {
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i].trim();
+          const dpMatch = line.match(/^(.{10,}?)\s*\(https?:\/\/www\.amazon\.com\/dp\/[A-Z0-9]{10}/i);
+          if (dpMatch) {
+            const candidate = dpMatch[1].trim().replace(/\.{2,}$/, "").trim();
+            if (candidate && candidate.length > 10 && !/^(Ship|Manage|Learn|Save|Shop|Get|Edit|Up to|Cancel)/i.test(candidate)) {
+              allItems.add(candidate);
+            }
+          }
+        }
+      }
     }
-    // Dedup by prefix
+    // Dedup by prefix (30 chars)
     const sorted = [...allItems].sort((a, b) => b.length - a.length);
     const result = [];
     for (const item of sorted) {
@@ -330,95 +420,119 @@ async function extractDigitalSubs(client, report) {
   ];
   try {
     const raws = await imapSearch(client, { from: "no-reply@amazon.com", body: "subscription" }, 50, report, "Digital Subs");
+    // found[name] = { status, date } -- keep most recent email's status
     const found = {};
     for (const raw of raws) {
       const p = await parseRaw(raw);
       const body = getTextBody(p);
-      const text = `${p.subject}\n${body}`;
+      const subj = p.subject || "";
+      const text = `${subj}\n${body}`;
       const low = text.toLowerCase();
-      if (/subscribe & save|auto-delivery/i.test(low)) continue;
-      const status = /cancel|ended|expired|removed|opted out/i.test(low) ? "cancelled" : "active";
+      const emailDate = p.date ? new Date(p.date).getTime() : 0;
+      // Skip S&S emails aggressively
+      if (/subscribe & save|auto-delivery|upcoming delivery|your new subscription/i.test(low)) continue;
+      if (/review your upcoming|payment method|update your payment/i.test(subj)) continue;
+      if (/your opinion matters|did your recent|review it on amazon/i.test(subj)) continue;
+      if (/seller.*requests you|message from.*seller/i.test(low)) continue;
+      // "cancel/ended" only if it's about cancelling the sub, not price update
+      const isCancelled = /cancel(?:led|lation)|ended|expired|removed|opted out/i.test(low)
+        && !/price.*(?:increas|chang|updat)/i.test(low);
+      const status = isCancelled ? "cancelled" : "active";
       for (const name of DIGITAL_SUBS) {
-        if (low.includes(name.toLowerCase())) {
-          if (!found[name] || (found[name] === "active" && status === "cancelled")) {
-            found[name] = status;
-          }
+        const nameLow = name.toLowerCase();
+        if (!low.includes(nameLow)) continue;
+        const subLow = subj.toLowerCase();
+        const inSubject = subLow.includes(nameLow);
+        // If only mentioned in body (not subject), require subscription context nearby
+        // to avoid false positives like "on Prime Video" in a Paramount+ email
+        if (!inSubject) {
+          const nameEsc = name.replace(/[+.*?^${}()|[\]\\]/g, "\\$&");
+          const ctxRe = new RegExp(
+            `(?:your|cancel|trial|renew|billing|charged|price|started|ended|active|sign.?up).{0,50}${nameEsc}|${nameEsc}.{0,50}(?:subscription|trial|cancel|renew|membership|billing|charged|price|started|ended|active)`,
+            "i"
+          );
+          if (!ctxRe.test(text)) continue;
+        }
+        const prev = found[name];
+        if (!prev || emailDate > prev.date) {
+          found[name] = { status, date: emailDate };
         }
       }
       // Subject patterns
       const subjPats = [
         /Your\s+(.+?)\s+(?:Free Trial|Subscription)\s+(?:Has|Is)/i,
         /Changes to your\s+(.+?)\s+subscription/i,
+        /Update to your\s+(.+?)\s+subscription/i,
       ];
       for (const pat of subjPats) {
-        const m = pat.exec(p.subject);
+        const m = pat.exec(subj);
         if (m) {
           const name = m[1].trim();
           if (name.length > 2 && name.length < 40) {
-            if (!found[name] || (found[name] === "active" && status === "cancelled")) {
-              found[name] = status;
+            const prev = found[name];
+            if (!prev || emailDate > prev.date) {
+              found[name] = { status, date: emailDate };
             }
           }
         }
       }
     }
-    report.digitalSubs = Object.entries(found).map(([name, status]) => `${name} (${status})`).sort();
+    // Normalize: merge "Paramount+" and "Paramount Plus"
+    if (found["Paramount Plus"] && !found["Paramount+"]) { found["Paramount+"] = found["Paramount Plus"]; }
+    delete found["Paramount Plus"];
+    report.digitalSubs = Object.entries(found).map(([name, v]) => `${name} (${v.status})`).sort();
   } catch (e) {
     report.errors.push(`Digital subs error: ${e.message}`);
   }
 }
 
 async function extractAccountName(client, report) {
-  const NAME_PATTERNS = [
-    /^Dear\s+([\w]+(?:\s+\w\.?)?\s+[\w]+)/im,
-    /([\w]+(?:\s+\w\.?)?\s+[\w]+),?\s+will you rate/im,
-    /^Hi\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\s*[,!.]/m,
-    /^Hello\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\s*[,!.]/m,
-    /^Hi\s+([A-Z][a-z]+\s+[A-Z][a-z]+)/m,
-    /^Hello\s+([A-Z][a-z]+\s+[A-Z][a-z]+)/m,
-  ];
-  const FALLBACK_PATTERNS = [
-    /Thanks for your order,\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/i,
-    /^Hello\s+([A-Z][a-z]+)/m,
-    /^Hi\s+([A-Z][a-z]+)/m,
-    /^([A-Z][a-z]+)\s+-\s+[A-Z]{2,}/m,
-  ];
+  const BLACKLIST = /^(amazon|hello|dear|items?|order|view|check|track|return|refund|click|manage|update|cancel|shop|learn|see|get|save|sign|log|visit|shipping|delivery|please|thank|buy|sell|price|free|new|from|your|this|that|the|here|more|now|out|all|for|has|was|are|our|its|and|the|you|how|did|not|but|any|can|may|will|have|what|why|per|inc|llc|corp|usa|qty|usd|ups|via|est|sun|mon|tue|wed|thu|fri|sat|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)$/i;
+  // Collect name candidates with weights from multiple sources
+  const candidates = {};
+  function addCandidate(name, weight) {
+    if (!name || name.length < 2 || /\d/.test(name) || BLACKLIST.test(name)) return;
+    const key = name.toLowerCase();
+    if (!candidates[key]) candidates[key] = { name, count: 0, weight: 0 };
+    candidates[key].count++;
+    candidates[key].weight += weight;
+  }
   try {
+    // Source 1: marketplace-messages "NAME, will you rate" (highest reliability)
     const raws = await imapSearch(client, { from: "marketplace-messages@amazon.com" }, 10, report, "Name");
-    for (const raw of raws.reverse()) {
+    for (const raw of raws) {
       const p = await parseRaw(raw);
-      const text = `${p.subject}\n${getTextBody(p)}`;
-      for (const pat of NAME_PATTERNS) {
-        const m = pat.exec(text);
-        if (m) {
-          const name = m[1].trim();
-          if (name.length > 3 && !/\d/.test(name)) { report.accountName = name; return; }
-        }
-      }
+      const subjMatch = (p.subject || "").match(/^(\w+),\s+will you rate/i);
+      if (subjMatch) addCandidate(subjMatch[1], 10);
       const body = getTextBody(p);
-      for (const pat of FALLBACK_PATTERNS) {
-        const m = pat.exec(body);
-        if (m) {
-          const name = m[1].trim();
-          if (name.length > 2 && !/\d/.test(name)) { report.accountName = name; return; }
-        }
-      }
+      const dearMatch = body.match(/^Dear\s+(\w+)/im);
+      if (dearMatch) addCandidate(dearMatch[1], 8);
     }
-    // Fallback: other Amazon senders
-    for (const sender of ["return@amazon.com", "shipment-tracking@amazon.com", "auto-confirm@amazon.com"]) {
-      const fbRaws = await imapSearch(client, { from: sender }, 10, report, "Name");
-      for (const raw of fbRaws.reverse()) {
+    // Source 2: return@ / auto-confirm@ "Hello/Hi/Dear NAME,"
+    for (const sender of ["return@amazon.com", "auto-confirm@amazon.com"]) {
+      const fbRaws = await imapSearch(client, { from: sender }, 5, report, "Name");
+      for (const raw of fbRaws) {
         const p = await parseRaw(raw);
         const body = getTextBody(p);
-        for (const pat of FALLBACK_PATTERNS) {
+        for (const pat of [/^Hello\s+(\w+)/im, /^Hi\s+(\w+)/im, /^Dear\s+(\w+)/im, /Thanks for your order,\s+(\w+)/i, /Delivering to\s+(\w+)/im]) {
           const m = pat.exec(body);
-          if (m) {
-            const name = m[1].trim();
-            if (name.length > 2 && !/\d/.test(name)) { report.accountName = name; return; }
-          }
+          if (m) addCandidate(m[1], 5);
         }
       }
     }
+    // Source 3: shipment-tracking "Hi NAME," / "Delivering to NAME"
+    const stRaws = await imapSearch(client, { from: "shipment-tracking@amazon.com" }, 5, report, "Name");
+    for (const raw of stRaws) {
+      const p = await parseRaw(raw);
+      const body = getTextBody(p);
+      for (const pat of [/^Hi\s+(\w+)/im, /Delivering to\s+(\w+)/im]) {
+        const m = pat.exec(body);
+        if (m) addCandidate(m[1], 3);
+      }
+    }
+    // Pick the candidate with highest total weight
+    const best = Object.values(candidates).sort((a, b) => b.weight - a.weight)[0];
+    if (best) report.accountName = best.name;
   } catch (e) {
     report.errors.push(`Name error: ${e.message}`);
   }

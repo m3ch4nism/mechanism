@@ -1,12 +1,46 @@
 import { useAppStore } from "../stores/appStore";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Trash2 } from "lucide-react";
+import { useConfirm } from "./ConfirmDialog";
+import { useEffect, useRef } from "react";
 
 export default function EmailView() {
-  const { selectedEmail, selectEmail } = useAppStore();
+  const { selectedEmail, selectEmail, deleteEmails } = useAppStore();
+  const confirm = useConfirm();
+  const deletingRef = useRef(false);
+
+  const quickDelete = async () => {
+    if (!selectedEmail || deletingRef.current) return;
+    deletingRef.current = true;
+    try {
+      const uid = selectedEmail.uid;
+      selectEmail(null);
+      await deleteEmails([uid]);
+    } finally {
+      deletingRef.current = false;
+    }
+  };
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Delete" && selectedEmail && !(e.target instanceof HTMLInputElement) && !(e.target instanceof HTMLTextAreaElement)) {
+        e.preventDefault();
+        quickDelete();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  });
 
   if (!selectedEmail) {
     return <div className="email-view empty">Select an email to read</div>;
   }
+
+  const handleDelete = async () => {
+    if (await confirm("Delete this email permanently?")) {
+      await deleteEmails([selectedEmail.uid]);
+      selectEmail(null);
+    }
+  };
 
   return (
     <div className="email-view">
@@ -21,6 +55,9 @@ export default function EmailView() {
             <span className="date">{new Date(selectedEmail.date).toLocaleString()}</span>
           </div>
         </div>
+        <button className="icon-btn" onClick={handleDelete} title="Delete email" style={{marginLeft: "auto", color: "var(--error)"}}>
+          <Trash2 size={16} />
+        </button>
       </div>
       <div className="email-view-body">
         {selectedEmail.bodyHtml ? (

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { startSidecar, checkNodeInstalled, installNode } from "./lib/sidecar";
+import { startSidecar, checkNodeInstalled, installNode, onPush } from "./lib/sidecar";
 import { useAppStore } from "./stores/appStore";
 import { ConfirmProvider } from "./components/ConfirmDialog";
 import { check } from "@tauri-apps/plugin-updater";
@@ -47,6 +47,20 @@ export default function App() {
       setStartError(e.message || "Failed to start");
     }
   };
+
+  useEffect(() => {
+    if ("Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission();
+    }
+    const unsub = onPush((data) => {
+      if (data.type === "newMail") {
+        try {
+          new Notification(data.sender || data.email, { body: data.subject, icon: undefined });
+        } catch {}
+      }
+    });
+    return unsub;
+  }, []);
 
   useEffect(() => {
     boot();
