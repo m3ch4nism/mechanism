@@ -8,6 +8,7 @@ export interface Account {
   imap_host: string;
   imap_port: number;
   use_ssl: boolean;
+  imap_user: string | null;
 }
 
 export interface Email {
@@ -64,7 +65,7 @@ interface AppState {
 
   init: () => Promise<void>;
   loadAccounts: () => Promise<void>;
-  addAccount: (email: string, password: string, host: string, port: number, ssl: boolean) => Promise<boolean>;
+  addAccount: (email: string, password: string, host: string, port: number, ssl: boolean, imapUser?: string) => Promise<boolean>;
   removeAccount: (email: string) => Promise<void>;
   selectAccount: (email: string) => Promise<void>;
   selectFolder: (folder: string) => Promise<void>;
@@ -118,8 +119,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ accounts });
   },
 
-  addAccount: async (email, password, host, port, ssl) => {
-    const ok = await call("addAccount", { email, password, imapHost: host, imapPort: port, useSsl: ssl });
+  addAccount: async (email, password, host, port, ssl, imapUser) => {
+    const ok = await call("addAccount", { email, password, imapHost: host, imapPort: port, useSsl: ssl, imapUser: imapUser || null });
     if (ok) await get().loadAccounts();
     return ok;
   },
@@ -145,7 +146,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (!account) throw new Error("Account not found");
       let settings = await call("getImapSettings", { email });
       if (!settings) settings = { host: account.imap_host, port: account.imap_port, secure: account.use_ssl };
-      await call("connect", { email, password: account.password, ...settings });
+      await call("connect", { email, password: account.password, ...settings, imapUser: account.imap_user });
       const connected = new Set(get().connectedAccounts);
       connected.add(email);
       const failed = new Set(get().failedAccounts);
@@ -196,7 +197,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       let settings = await call("getImapSettings", { email });
       if (!settings) settings = { host: account.imap_host, port: account.imap_port, secure: account.use_ssl };
       const report = await call("amazonCheck", {
-        email, password: account.password, ...settings,
+        email, password: account.password, ...settings, imapUser: account.imap_user,
       });
       set({ amazonReport: report, amazonLoading: false });
     } catch (e: any) {
@@ -243,7 +244,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       try {
         let settings = await call("getImapSettings", { email: acc.email });
         if (!settings) settings = { host: acc.imap_host, port: acc.imap_port, secure: acc.use_ssl };
-        const res = await call("verifyAccount", { email: acc.email, password: acc.password, ...settings });
+        const res = await call("verifyAccount", { email: acc.email, password: acc.password, ...settings, imapUser: acc.imap_user });
         const connected = new Set(get().connectedAccounts);
         const failed = new Set(get().failedAccounts);
         if (res.status === "ok") {
@@ -278,7 +279,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       let settings = await call("getImapSettings", { email });
       if (!settings) settings = { host: account.imap_host, port: account.imap_port, secure: account.use_ssl };
       const results = await call("runPreset", {
-        email, password: account.password, ...settings, preset,
+        email, password: account.password, ...settings, preset, imapUser: account.imap_user,
       });
       set({ presetResults: results, presetLoading: false });
     } catch (e: any) {

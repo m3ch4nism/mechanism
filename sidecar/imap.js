@@ -92,13 +92,13 @@ export function getImapSettings(email, customImaps) {
   return KNOWN_PROVIDERS[domain] || null;
 }
 
-export async function connectImap(email, password, settings, proxyStr) {
+export async function connectImap(email, password, settings, proxyStr, imapUser) {
   const proxy = parseProxy(proxyStr);
   const config = {
     host: settings.host,
     port: settings.port,
     secure: settings.secure,
-    auth: { user: email, pass: password },
+    auth: { user: imapUser || email, pass: password },
     logger: false,
     tls: { rejectUnauthorized: false },
     connectionTimeout: 15000,

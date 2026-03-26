@@ -24,8 +24,11 @@ export async function initDb() {
     password TEXT NOT NULL,
     imap_host TEXT NOT NULL,
     imap_port INTEGER NOT NULL DEFAULT 993,
-    use_ssl INTEGER NOT NULL DEFAULT 1
+    use_ssl INTEGER NOT NULL DEFAULT 1,
+    imap_user TEXT
   )`);
+  // Migration: add imap_user column if missing
+  try { db.run("ALTER TABLE accounts ADD COLUMN imap_user TEXT"); } catch {}
   db.run(`CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -94,11 +97,11 @@ export function getDb() {
   return db;
 }
 
-export function addAccount(email, password, imapHost, imapPort, useSsl) {
+export function addAccount(email, password, imapHost, imapPort, useSsl, imapUser) {
   const d = getDb();
   try {
-    d.run("INSERT INTO accounts (email, password, imap_host, imap_port, use_ssl) VALUES (?, ?, ?, ?, ?)",
-      [email, password, imapHost, imapPort, useSsl ? 1 : 0]);
+    d.run("INSERT INTO accounts (email, password, imap_host, imap_port, use_ssl, imap_user) VALUES (?, ?, ?, ?, ?, ?)",
+      [email, password, imapHost, imapPort, useSsl ? 1 : 0, imapUser || null]);
     save();
     return true;
   } catch { return false; }
@@ -118,7 +121,7 @@ export function getAccounts() {
   if (!rows.length) return [];
   return rows[0].values.map(r => ({
     id: r[0], email: r[1], password: r[2],
-    imap_host: r[3], imap_port: r[4], use_ssl: !!r[5]
+    imap_host: r[3], imap_port: r[4], use_ssl: !!r[5], imap_user: r[6] || null
   }));
 }
 

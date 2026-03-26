@@ -84,6 +84,7 @@ function AddAccountModal({ onClose }: { onClose: () => void }) {
   const [host, setHost] = useState("");
   const [port, setPort] = useState("993");
   const [ssl, setSsl] = useState(true);
+  const [imapUser, setImapUser] = useState("");
   const [error, setError] = useState("");
   const [validating, setValidating] = useState(false);
 
@@ -104,7 +105,7 @@ function AddAccountModal({ onClose }: { onClose: () => void }) {
     setError("");
     try {
       const sidecar = await import("../lib/sidecar");
-      await sidecar.call("connect", { email, password, host: h, port: p, secure: ssl });
+      await sidecar.call("connect", { email, password, host: h, port: p, secure: ssl, imapUser: imapUser || null });
       await sidecar.call("disconnect", { email });
     } catch (e: any) {
       setValidating(false);
@@ -112,7 +113,7 @@ function AddAccountModal({ onClose }: { onClose: () => void }) {
       return;
     }
     setValidating(false);
-    const ok = await addAccount(email, password, h, p, ssl);
+    const ok = await addAccount(email, password, h, p, ssl, imapUser || undefined);
     if (ok) onClose();
     else setError("Account already exists");
   };
@@ -125,6 +126,7 @@ function AddAccountModal({ onClose }: { onClose: () => void }) {
         <input placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} />
         <input placeholder="Password" type="password" value={password} onChange={e => setPassword(e.target.value)} />
         <input placeholder="IMAP host (auto-detect)" value={host} onChange={e => setHost(e.target.value)} />
+        <input placeholder="IMAP username (optional, defaults to email)" value={imapUser} onChange={e => setImapUser(e.target.value)} />
         <div className="row">
           <input placeholder="Port" value={port} onChange={e => setPort(e.target.value)} style={{ width: 80 }} />
           <label><input type="checkbox" checked={ssl} onChange={e => setSsl(e.target.checked)} /> SSL</label>

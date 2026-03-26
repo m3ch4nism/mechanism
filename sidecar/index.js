@@ -21,10 +21,10 @@ function log(level, msg) {
 }
 
 process.on("uncaughtException", (err) => {
-  log("FATAL", `Uncaught: ${err.stack || err.message}`);
+  log("WARN", `Uncaught: ${err.message}`);
 });
 process.on("unhandledRejection", (err) => {
-  log("ERROR", `Unhandled rejection: ${err?.stack || err?.message || err}`);
+  log("WARN", `Unhandled rejection: ${err?.message || err}`);
 });
 import {
   initDb, save, addAccount, removeAccount, getAccounts,
@@ -40,68 +40,8 @@ import {
 import { runAmazonCheck } from "./amazon.js";
 
 const clients = {};
-const idleWatchers = {};
 let initDone = false;
 let initPromise = null;
-
-function pushNotification(data) {
-  const msg = JSON.stringify({ id: 0, push: data });
-  process.stdout.write(msg + "\n");
-}
-
-function startIdleWatch(email, client) {
-  if (idleWatchers[email]) return;
-  idleWatchers[email] = true;
-  client.on("exists", async (data) => {
-    log("INFO", `IDLE: new mail in ${email} (${data.path}, count: ${data.count})`);
-    let subject = "New email";
-    let sender = "";
-    try {
-      const lock = await client.getMailboxLock(data.path);
-      try {
-        const total = client.mailbox.exists;
-        if (total > 0) {
-          for await (const msg of client.fetch(`${total}:${total}`, { uid: true, envelope: true })) {
-            subject = msg.envelope?.subject || "New email";
-            sender = msg.envelope?.from?.[0]?.address || "";
-          }
-        }
-      } finally { lock.release(); }
-    } catch (e) {
-      log("ERROR", `IDLE fetch preview: ${e.message}`);
-    }
-    pushNotification({ type: "newMail", email, folder: data.path, subject, sender });
-  });
-  const reconnect = async () => {
-    delete idleWatchers[email];
-    delete clients[email];
-    log("INFO", `IDLE: reconnecting ${email}...`);
-    try {
-      const account = getAccounts().find(a => a.email === email);
-      if (!account) return;
-      const customs = getAllCustomImap();
-      const settings = getImapSettings(email, customs) || { host: account.imap_host, port: account.imap_port, secure: !!account.use_ssl };
-      const proxy = getSetting("proxy");
-      const newClient = await connectImap(email, account.password, settings, proxy);
-      clients[email] = newClient;
-      startIdleWatch(email, newClient);
-      log("INFO", `IDLE: reconnected ${email}`);
-    } catch (e) {
-      log("ERROR", `IDLE: reconnect failed for ${email}: ${e.message}`);
-      // Retry in 30 seconds
-      setTimeout(() => reconnect(), 30000);
-    }
-  };
-  client.on("close", () => {
-    log("INFO", `IDLE: connection closed for ${email}`);
-    reconnect();
-  });
-  client.on("error", (err) => {
-    log("ERROR", `IDLE: error for ${email}: ${err.message}`);
-    // close event will fire after error, triggering reconnect
-  });
-  log("INFO", `IDLE: watching ${email}`);
-}
 
 const rl = readline.createInterface({ input: process.stdin });
 
@@ -131,8 +71,8 @@ async function handleRequest(req) {
         break;
 
       case "addAccount": {
-        const { email, password, imapHost, imapPort, useSsl } = params;
-        result = addAccount(email, password, imapHost, imapPort, useSsl);
+        const { email, password, imapHost, imapPort, useSsl, imapUser } = params;
+        result = addAccount(email, password, imapHost, imapPort, useSsl, imapUser);
         break;
       }
 
@@ -169,11 +109,10 @@ async function handleRequest(req) {
         break;
 
       case "connect": {
-        const { email, password, host, port, secure } = params;
+        const { email, password, host, port, secure, imapUser } = params;
         const proxy = getSetting("proxy");
-        const client = await connectImap(email, password, { host, port, secure }, proxy);
+        const client = await connectImap(email, password, { host, port, secure }, proxy, imapUser);
         clients[email] = client;
-        startIdleWatch(email, client);
         result = { connected: true };
         break;
       }
@@ -186,12 +125,11 @@ async function handleRequest(req) {
       }
 
       case "verifyAccount": {
-        const { email, password, host, port, secure } = params;
+        const { email, password, host, port, secure, imapUser } = params;
         const proxy = getSetting("proxy");
         try {
-          const client = await connectImap(email, password, { host, port, secure }, proxy);
+          const client = await connectImap(email, password, { host, port, secure }, proxy, imapUser);
           clients[email] = client;
-          startIdleWatch(email, client);
           result = { status: "ok" };
         } catch (e) {
           result = { status: "error", error: e.message };
@@ -207,7 +145,7 @@ async function handleRequest(req) {
           const customs = getAllCustomImap();
           const settings = getImapSettings(params.email, customs) || { host: account.imap_host, port: account.imap_port, secure: !!account.use_ssl };
           const proxy = getSetting("proxy");
-          c = await connectImap(params.email, account.password, settings, proxy);
+          c = await connectImap(params.email, account.password, settings, proxy, account.imap_user);
           clients[params.email] = c;
         }
         result = await fetchFolders(c);
@@ -223,7 +161,7 @@ async function handleRequest(req) {
           const customs = getAllCustomImap();
           const settings = getImapSettings(params.email, customs) || { host: account.imap_host, port: account.imap_port, secure: !!account.use_ssl };
           const proxy = getSetting("proxy");
-          c = await connectImap(params.email, account.password, settings, proxy);
+          c = await connectImap(params.email, account.password, settings, proxy, account.imap_user);
           clients[params.email] = c;
           log("INFO", `auto-reconnected ${params.email}`);
         }
@@ -241,7 +179,7 @@ async function handleRequest(req) {
           const customs = getAllCustomImap();
           const settings = getImapSettings(params.email, customs) || { host: account.imap_host, port: account.imap_port, secure: !!account.use_ssl };
           const proxy = getSetting("proxy");
-          c = await connectImap(params.email, account.password, settings, proxy);
+          c = await connectImap(params.email, account.password, settings, proxy, account.imap_user);
           clients[params.email] = c;
         }
         result = await deleteEmails(c, params.folder || "INBOX", params.uids);
@@ -256,7 +194,7 @@ async function handleRequest(req) {
           const customs = getAllCustomImap();
           const settings = getImapSettings(params.email, customs) || { host: account.imap_host, port: account.imap_port, secure: !!account.use_ssl };
           const proxy = getSetting("proxy");
-          c = await connectImap(params.email, account.password, settings, proxy);
+          c = await connectImap(params.email, account.password, settings, proxy, account.imap_user);
           clients[params.email] = c;
         }
         result = await searchEmails(c, params.folder || "INBOX", params.criteria || {}, params.limit || 50);
@@ -268,14 +206,13 @@ async function handleRequest(req) {
         break;
 
       case "amazonCheck": {
-        const { email, password, host, port, secure } = params;
+        const { email, password, host, port, secure, imapUser } = params;
         const proxy = getSetting("proxy");
         const geminiKey = getSetting("gemini_key");
         const settings = { host, port, secure };
         const clients = [];
-        // Try 3 parallel connections, fallback to fewer if proxy can't handle it
         const tryConnect = async () => {
-          try { return await connectImap(email, password, settings, proxy); }
+          try { return await connectImap(email, password, settings, proxy, imapUser); }
           catch (e) { log("ERROR", `amazonCheck connect failed: ${e.message}`); return null; }
         };
         const [r1, r2, r3] = await Promise.all([tryConnect(), tryConnect(), tryConnect()]);
@@ -285,7 +222,7 @@ async function handleRequest(req) {
         // If less than 3 connected, retry missing ones sequentially
         while (clients.length < 3) {
           try {
-            const c = await connectImap(email, password, settings, proxy);
+            const c = await connectImap(email, password, settings, proxy, imapUser);
             clients.push(c);
           } catch (e) {
             log("ERROR", `amazonCheck retry connect failed: ${e.message}`);
@@ -353,12 +290,12 @@ async function handleRequest(req) {
         break;
 
       case "runPreset": {
-        const { email, password, host, port, secure, preset } = params;
+        const { email, password, host, port, secure, preset, imapUser } = params;
         const proxy = getSetting("proxy");
         let client = clients[email];
         let needClose = false;
         if (!client) {
-          client = await connectImap(email, password, { host, port, secure }, proxy);
+          client = await connectImap(email, password, { host, port, secure }, proxy, imapUser);
           needClose = true;
         }
         try {

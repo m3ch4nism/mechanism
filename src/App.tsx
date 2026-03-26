@@ -21,12 +21,24 @@ export default function App() {
   const [page, setPage] = useState("inbox");
   const [updateAvailable, setUpdateAvailable] = useState<{ version: string; download: () => Promise<void> } | null>(null);
   const [updating, setUpdating] = useState(false);
+  const [showChangelog, setShowChangelog] = useState(false);
+
+  const CHANGELOG: Record<string, string> = {
+    "0.1.9": "• Добавлено поле IMAP Username (для провайдеров типа Comcast/TWC)\n• Удаление писем через IMAP (кнопка + клавиша Delete)\n• Статус подключения: зелёный/красный/серый индикатор\n• Авто-проверка всех аккаунтов при запуске\n• Исправлен анализ Amazon: карты, подписки S&S, имя аккаунта, цифровые подписки\n• Исправлены крашы ECONNRESET/Socket timeout",
+  };
 
   useEffect(() => {
     const t = localStorage.getItem("theme");
     if (t) document.documentElement.setAttribute("data-theme", t);
     const fs = localStorage.getItem("fontSize");
     if (fs) document.documentElement.style.fontSize = fs + "px";
+    // Show changelog after update
+    const lastVersion = localStorage.getItem("lastSeenVersion");
+    const currentVersion = __APP_VERSION__;
+    if (lastVersion && lastVersion !== currentVersion && CHANGELOG[currentVersion]) {
+      setShowChangelog(true);
+    }
+    localStorage.setItem("lastSeenVersion", currentVersion);
   }, []);
 
   const boot = async () => {
@@ -163,6 +175,15 @@ export default function App() {
           {page === "settings" && <SettingsPage />}
         </div>
       </div>
+      {showChangelog && (
+        <div className="modal-overlay" onClick={() => setShowChangelog(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{maxWidth: 420}}>
+            <h3>Обновлено до v{__APP_VERSION__}</h3>
+            <pre style={{whiteSpace: "pre-wrap", fontSize: 12, lineHeight: 1.6, color: "var(--text)", margin: "8px 0"}}>{CHANGELOG[__APP_VERSION__] || "Багфиксы и улучшения"}</pre>
+            <button className="btn primary" onClick={() => setShowChangelog(false)} style={{marginTop: 8}}>Ок</button>
+          </div>
+        </div>
+      )}
     </ConfirmProvider>
   );
 }
