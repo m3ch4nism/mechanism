@@ -20,13 +20,20 @@ dist-ssr
 src-tauri/target/
 src-tauri/gen/
 src-tauri/.tauri/
+src-tauri/target/release/bundle/
 
 # Sidecar deps
 sidecar/node_modules/
+sidecar/node_modules_old/
 
 # Temp files
 tmp/
+.mechanism/
+
+# Release scripts
+release.ps1
 
 # IDE / agent configs
 .claude/
+.gemini/
 ~/
