@@ -62,6 +62,8 @@ interface AppState {
   presets: SearchPreset[];
   presetResults: Email[] | null;
   presetLoading: boolean;
+  
+  amazonNotes: string;
 
   init: () => Promise<void>;
   loadAccounts: () => Promise<void>;
@@ -73,12 +75,14 @@ interface AppState {
   setProxy: (proxy: string | null) => Promise<void>;
   loadProxy: () => Promise<void>;
   runAmazonCheck: (email: string) => Promise<void>;
+  loadAmazonHistory: (email: string) => Promise<void>;
   refreshEmails: () => Promise<void>;
   loadPresets: () => Promise<void>;
   addPreset: (preset: Omit<SearchPreset, "id">) => Promise<void>;
   updatePreset: (preset: SearchPreset) => Promise<void>;
   removePreset: (id: number) => Promise<void>;
   runPreset: (email: string, preset: SearchPreset) => Promise<void>;
+  setAmazonNotes: (notes: string) => void;
   verifyAccounts: () => Promise<void>;
   deleteEmails: (uids: string[]) => Promise<void>;
 }
@@ -100,6 +104,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   presets: [],
   presetResults: null,
   presetLoading: false,
+  amazonNotes: "",
 
   init: async () => {
     try {
@@ -205,6 +210,19 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
+  loadAmazonHistory: async (email) => {
+    try {
+      const history = await call("getCheckHistory", { email });
+      if (history && history.length > 0) {
+        set({ amazonReport: history[0].report, error: null });
+      } else {
+        set({ amazonReport: null, error: null });
+      }
+    } catch {
+      set({ amazonReport: null });
+    }
+  },
+
   refreshEmails: async () => {
     const { selectedAccount, selectedFolder } = get();
     if (!selectedAccount) return;
@@ -286,4 +304,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({ error: e.message, presetLoading: false });
     }
   },
+
+  setAmazonNotes: (notes: string) => set({ amazonNotes: notes }),
 }));

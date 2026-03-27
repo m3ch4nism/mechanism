@@ -1,6 +1,6 @@
 import { useAppStore } from "../stores/appStore";
-import { Loader2, X, Copy, Download, FileText } from "lucide-react";
-import { useState } from "react";
+import { Loader2, X, Copy, Download, FileText, Edit3 } from "lucide-react";
+import { useState, useEffect } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 
@@ -46,11 +46,18 @@ function reportToText(r: any): string {
 }
 
 export default function AmazonCheck() {
-  const { accounts, amazonReport, amazonLoading, runAmazonCheck, error } = useAppStore();
+  const { accounts, amazonReport, amazonLoading, runAmazonCheck, loadAmazonHistory, error, amazonNotes, setAmazonNotes } = useAppStore();
   const [selected, setSelected] = useState(accounts[0]?.email || "");
   const [viewEmail, setViewEmail] = useState<any>(null);
   const [sectionFilter, setSectionFilter] = useState("All");
   const [searchQuery, setSearchQuery] = useState("");
+  const [showNotes, setShowNotes] = useState(false);
+
+  useEffect(() => {
+    if (selected && !amazonLoading && amazonReport?.email !== selected) {
+      loadAmazonHistory(selected);
+    }
+  }, [selected]);
 
   const handleRun = () => {
     setViewEmail(null);
@@ -80,6 +87,9 @@ export default function AmazonCheck() {
         </select>
         <button className="btn primary" onClick={handleRun} disabled={amazonLoading}>
           {amazonLoading ? <><Loader2 size={14} className="spin" /> scanning...</> : "> run"}
+        </button>
+        <button className={`btn ${showNotes ? "primary" : ""}`} onClick={() => setShowNotes(!showNotes)} title="Toggle Notes">
+          <Edit3 size={14} /> notes
         </button>
         {amazonReport && (
           <>
@@ -113,6 +123,17 @@ export default function AmazonCheck() {
         )}
       </div>
       {error && <div className="error">{error}</div>}
+
+      {showNotes && (
+        <div className="amazon-notes-pad">
+          <textarea
+            placeholder="Type notes here...&#10;(Resets on app restart)"
+            value={amazonNotes}
+            onChange={e => setAmazonNotes(e.target.value)}
+            spellCheck={false}
+          />
+        </div>
+      )}
 
       {amazonReport && (
         <div className="amazon-split">

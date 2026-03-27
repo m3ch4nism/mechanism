@@ -339,3 +339,38 @@ input:focus, select:focus { outline: none; border-color: var(--accent-dim); }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
+
+/* Sticky Note Pad */
+.amazon-notes-pad {
+  position: absolute;
+  top: 45px;
+  right: 14px;
+  width: 300px;
+  height: 250px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-top: 2px solid var(--accent);
+  box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  padding: 10px;
+  border-radius: 4px;
+  transition: opacity 0.2s;
+}
+
+.amazon-notes-pad textarea {
+  flex: 1;
+  background: transparent;
+  border: none;
+  resize: none;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+  outline: none;
+}
+.amazon-notes-pad textarea::placeholder {
+  color: var(--text-dim);
+  opacity: 0.7;
+}
