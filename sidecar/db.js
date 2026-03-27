@@ -29,6 +29,14 @@ export async function initDb() {
   )`);
   // Migration: add imap_user column if missing
   try { db.run("ALTER TABLE accounts ADD COLUMN imap_user TEXT"); } catch {}
+  // Migration: rename gemini_key to groq_key
+  try {
+    const oldKey = db.exec("SELECT value FROM settings WHERE key = 'gemini_key'");
+    if (oldKey.length && oldKey[0].values.length) {
+      db.run("INSERT OR REPLACE INTO settings (key, value) VALUES ('groq_key', ?)", [oldKey[0].values[0][0]]);
+      db.run("DELETE FROM settings WHERE key = 'gemini_key'");
+    }
+  } catch {}
   db.run(`CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL

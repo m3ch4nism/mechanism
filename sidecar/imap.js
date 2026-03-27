@@ -4,6 +4,10 @@ import { simpleParser } from "mailparser";
 import net from "net";
 import http from "http";
 import tls from "tls";
+import fs from "fs";
+import path from "path";
+import os from "os";
+import crypto from "crypto";
 
 const KNOWN_PROVIDERS = {
   "comcast.net": { host: "imap.comcast.net", port: 993, secure: true },
@@ -183,23 +187,49 @@ export async function fetchEmails(client, folder, limit = 50) {
     const messages = [];
     const total = client.mailbox.exists;
     if (!total) return [];
+    
+    // 1. Fetch metadata first (fast, minimal RAM)
     const from = Math.max(1, total - limit + 1);
-    for await (const msg of client.fetch(`${from}:*`, {
-      uid: true, envelope: true, flags: true, bodyStructure: true, source: true,
-    })) {
-      const parsed = await simpleParser(msg.source);
-      messages.push({
-        uid: String(msg.uid),
-        subject: parsed.subject || "(no subject)",
-        sender: parsed.from?.text || "",
-        date: parsed.date?.toISOString() || "",
-        bodyText: parsed.text || "",
-        bodyHtml: parsed.html || "",
-        flags: Array.from(msg.flags || []),
-        attachments: (parsed.attachments || []).map(a => ({
-          filename: a.filename, size: a.size, contentType: a.contentType,
-        })),
-      });
+    const uids = [];
+    const flagsMap = new Map();
+    for await (const msg of client.fetch(`${from}:*`, { uid: true, flags: true })) {
+      uids.push(msg.uid);
+      flagsMap.set(msg.uid, Array.from(msg.flags || []));
+    }
+
+    // 2. Stream sources one by one to disk to avoid out-of-memory errors
+    const tmpDir = path.join(os.homedir(), ".mechanism", "tmp");
+    if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
+
+    for (const uid of uids) {
+      const tmpPath = path.join(tmpDir, `email_${uid}_${crypto.randomBytes(4).toString("hex")}.eml`);
+      try {
+        const { content } = await client.download(uid);
+        await new Promise((resolve, reject) => {
+          const ws = fs.createWriteStream(tmpPath);
+          content.pipe(ws);
+          content.on("error", reject);
+          ws.on("finish", resolve);
+        });
+        
+        const parsed = await simpleParser(fs.createReadStream(tmpPath));
+        messages.push({
+          uid: String(uid),
+          subject: parsed.subject || "(no subject)",
+          sender: parsed.from?.text || "",
+          date: parsed.date?.toISOString() || "",
+          bodyText: parsed.text || "",
+          bodyHtml: parsed.html || "",
+          flags: flagsMap.get(uid) || [],
+          attachments: (parsed.attachments || []).map(a => ({
+            filename: a.filename, size: a.size, contentType: a.contentType,
+          })),
+        });
+      } catch (e) {
+        console.error(`Failed to download/parse email uid=${uid}`, e);
+      } finally {
+        if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
+      }
     }
     return messages.reverse();
   } finally {
@@ -216,23 +246,51 @@ export async function searchEmails(client, folder, criteria, limit = 50) {
     if (criteria.body) searchCriteria.body = criteria.body;
     if (criteria.since) searchCriteria.since = new Date(criteria.since);
     if (criteria.before) searchCriteria.before = new Date(criteria.before);
-    const uids = await client.search(searchCriteria, { uid: true });
-    if (!uids.length) return [];
-    const targetUids = uids.slice(-limit);
+    
+    // 1. Get UIDs
+    const allUids = await client.search(searchCriteria, { uid: true });
+    if (!allUids.length) return [];
+    const targetUids = allUids.slice(-limit);
+    
+    // 2. Fetch metadata
+    const uids = [];
+    const flagsMap = new Map();
+    for await (const msg of client.fetch(targetUids, { uid: true, flags: true }, { uid: true })) {
+      uids.push(msg.uid);
+      flagsMap.set(msg.uid, Array.from(msg.flags || []));
+    }
+
+    // 3. Stream to disk to save memory
+    const tmpDir = path.join(os.homedir(), ".mechanism", "tmp");
+    if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
+    
     const messages = [];
-    for await (const msg of client.fetch(targetUids, {
-      uid: true, envelope: true, flags: true, source: true,
-    }, { uid: true })) {
-      const parsed = await simpleParser(msg.source);
-      messages.push({
-        uid: String(msg.uid),
-        subject: parsed.subject || "(no subject)",
-        sender: parsed.from?.text || "",
-        date: parsed.date?.toISOString() || "",
-        bodyText: parsed.text || "",
-        bodyHtml: parsed.html || "",
-        flags: Array.from(msg.flags || []),
-      });
+    for (const uid of uids) {
+      const tmpPath = path.join(tmpDir, `email_${uid}_${crypto.randomBytes(4).toString("hex")}.eml`);
+      try {
+        const { content } = await client.download(uid);
+        await new Promise((resolve, reject) => {
+          const ws = fs.createWriteStream(tmpPath);
+          content.pipe(ws);
+          content.on("error", reject);
+          ws.on("finish", resolve);
+        });
+
+        const parsed = await simpleParser(fs.createReadStream(tmpPath));
+        messages.push({
+          uid: String(uid),
+          subject: parsed.subject || "(no subject)",
+          sender: parsed.from?.text || "",
+          date: parsed.date?.toISOString() || "",
+          bodyText: parsed.text || "",
+          bodyHtml: parsed.html || "",
+          flags: flagsMap.get(uid) || [],
+        });
+      } catch (e) {
+        console.error(`Failed to download/parse email uid=${uid}`, e);
+      } finally {
+        if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
+      }
     }
     return messages.reverse();
   } finally {

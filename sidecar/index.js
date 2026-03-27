@@ -223,7 +223,7 @@ async function handleRequest(req) {
       case "amazonCheck": {
         const { email, password, host, port, secure, imapUser } = params;
         const proxy = getSetting("proxy");
-        const geminiKey = getSetting("gemini_key");
+        const groqKey = getSetting("groq_key");
         const settings = { host, port, secure };
         const clients = [];
         const tryConnect = async () => {
@@ -252,7 +252,7 @@ async function handleRequest(req) {
           const allFolders = await fetchFolders(clients[0]);
           const folderPaths = allFolders.map(f => f.path);
           log("INFO", `amazonCheck folders: ${folderPaths.join(", ")}`);
-          result = await runAmazonCheck(clients, email, geminiKey, folderPaths);
+          result = await runAmazonCheck(clients, email, groqKey, folderPaths);
           saveCheckHistory(email, result);
         } finally {
           const unique = [...new Set(clients)];
@@ -275,14 +275,14 @@ async function handleRequest(req) {
         result = getSetting("proxy");
         break;
 
-      case "setGeminiKey":
-        if (params.key) setSetting("gemini_key", params.key);
-        else deleteSetting("gemini_key");
+      case "setGroqKey":
+        if (params.key) setSetting("groq_key", params.key);
+        else deleteSetting("groq_key");
         result = true;
         break;
 
-      case "getGeminiKey":
-        result = getSetting("gemini_key");
+      case "getGroqKey":
+        result = getSetting("groq_key");
         break;
 
       case "testProxy": {

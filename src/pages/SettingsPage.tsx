@@ -11,10 +11,10 @@ export default function SettingsPage() {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ directIp: string; proxyIp: string; working: boolean } | null>(null);
   const [testError, setTestError] = useState("");
-  const [geminiKey, setGeminiKey] = useState("");
-  const [geminiSaved, setGeminiSaved] = useState(false);
+  const [groqKey, setGroqKey] = useState("");
+  const [groqSaved, setGroqSaved] = useState(false);
 
-  useEffect(() => { call("getGeminiKey").then(k => { if (k) setGeminiKey(k); }); }, []);
+  useEffect(() => { call("getGroqKey").then(k => { if (k) setGroqKey(k); }); }, []);
 
   const handleSave = async () => {
     await setProxy(proxyInput || null);
@@ -77,16 +77,16 @@ export default function SettingsPage() {
           <input
             placeholder="Groq API key (gsk_...)"
             type="password"
-            value={geminiKey}
-            onChange={e => setGeminiKey(e.target.value)}
+            value={groqKey}
+            onChange={e => setGroqKey(e.target.value)}
             style={{ flex: 1 }}
           />
           <button className="btn primary" onClick={async () => {
-            await call("setGeminiKey", { key: geminiKey || null });
-            setGeminiSaved(true);
-            setTimeout(() => setGeminiSaved(false), 2000);
+            await call("setGroqKey", { key: groqKey || null });
+            setGroqSaved(true);
+            setTimeout(() => setGroqSaved(false), 2000);
           }}>
-            {geminiSaved ? "Saved!" : "Save"}
+            {groqSaved ? "Saved!" : "Save"}
           </button>
         </div>
         <p className="hint" style={{marginTop: 4}}>Without key: raw product names. With key: AI extracts short names (Fishing Rod, Headphones, etc.). Free, no billing.</p>

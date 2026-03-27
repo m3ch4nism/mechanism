@@ -66,7 +66,7 @@ function getTextBody(parsed) {
   return "";
 }
 
-export async function runAmazonCheck(clients, email, geminiKey, folders) {
+export async function runAmazonCheck(clients, email, groqKey, folders) {
   const [c1, c2, c3] = Array.isArray(clients) ? clients : [clients, clients, clients];
   // Prioritize INBOX first, then the rest
   const searchFolders = folders && folders.length > 0
@@ -110,9 +110,9 @@ export async function runAmazonCheck(clients, email, geminiKey, folders) {
       const key = p.slice(0, 40).toLowerCase();
       if (!seen.has(key)) { seen.add(key); allProducts.push(p); }
     }
-    if (allProducts.length > 0 && geminiKey) {
+    if (allProducts.length > 0 && groqKey) {
       try {
-        const analysis = await analyzeInterests(geminiKey, allProducts);
+        const analysis = await analyzeInterests(groqKey, allProducts);
         report.cartInterest.classified = analysis.items;
         report.cartInterest.groups = analysis.groups;
       } catch (e) {
