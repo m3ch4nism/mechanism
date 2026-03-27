@@ -17,12 +17,18 @@ function log(level, msg) {
   const ts = new Date().toISOString();
   const line = `[${ts}] [${level}] ${msg}\n`;
   try { appendFileSync(LOG_FILE, line); } catch {}
-  if (level === "ERROR") process.stderr.write(line);
+  if (level === "ERROR") {
+    try { process.stderr.write(line); } catch {}
+  }
+}
+
+function isUsable(client) {
+  return client && client.authenticated && client.connection && !client.connection.destroyed;
 }
 
 function purgeDeadClients() {
   for (const [email, c] of Object.entries(clients)) {
-    if (!c.usable) {
+    if (!isUsable(c)) {
       log("WARN", `purging dead connection: ${email}`);
       try { c.logout(); } catch {}
       delete clients[email];
@@ -58,8 +64,12 @@ let initPromise = null;
 const rl = readline.createInterface({ input: process.stdin });
 
 function send(id, result, error) {
-  const msg = JSON.stringify({ id, result: result ?? null, error: error ?? null });
-  process.stdout.write(msg + "\n");
+  try {
+    const msg = JSON.stringify({ id, result: result ?? null, error: error ?? null });
+    process.stdout.write(msg + "\n");
+  } catch (e) {
+    log("ERROR", `Failed to send response: ${e.message}`);
+  }
 }
 
 async function handleRequest(req) {
@@ -151,7 +161,7 @@ async function handleRequest(req) {
 
       case "fetchFolders": {
         let c = clients[params.email];
-        if (!c || !c.usable) {
+        if (!isUsable(c)) {
           if (c) { try { await c.logout(); } catch {} delete clients[params.email]; }
           const account = getAccounts().find(a => a.email === params.email);
           if (!account) throw new Error("Account not found");
@@ -167,7 +177,7 @@ async function handleRequest(req) {
 
       case "fetchEmails": {
         let c = clients[params.email];
-        if (!c || !c.usable) {
+        if (!isUsable(c)) {
           if (c) { try { await c.logout(); } catch {} delete clients[params.email]; }
           const account = getAccounts().find(a => a.email === params.email);
           if (!account) throw new Error("Account not found");
@@ -186,7 +196,7 @@ async function handleRequest(req) {
 
       case "deleteEmails": {
         let c = clients[params.email];
-        if (!c || !c.usable) {
+        if (!isUsable(c)) {
           if (c) { try { await c.logout(); } catch {} delete clients[params.email]; }
           const account = getAccounts().find(a => a.email === params.email);
           if (!account) throw new Error("Account not found");
@@ -202,7 +212,7 @@ async function handleRequest(req) {
 
       case "searchEmails": {
         let c = clients[params.email];
-        if (!c || !c.usable) {
+        if (!isUsable(c)) {
           if (c) { try { await c.logout(); } catch {} delete clients[params.email]; }
           const account = getAccounts().find(a => a.email === params.email);
           if (!account) throw new Error("Account not found");

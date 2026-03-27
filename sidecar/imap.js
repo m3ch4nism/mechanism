@@ -137,6 +137,7 @@ async function _doConnect(config, proxy, settings) {
     delete config.port;
     delete config.secure;
     const client = new ImapFlow(config);
+    client.on("error", (err) => console.error(`[imapflow error] ${config.auth.user}: ${err.message}`));
     await client.connect();
     return client;
   }
@@ -150,6 +151,7 @@ async function _doConnect(config, proxy, settings) {
     };
     config.proxy = buildProxyUrl(proxy);
     const client = new ImapFlow(config);
+    client.on("error", (err) => console.error(`[imapflow error] ${config.auth.user}: ${err.message}`));
     try {
       await client.connect();
     } finally {
@@ -159,6 +161,7 @@ async function _doConnect(config, proxy, settings) {
   }
 
   const client = new ImapFlow(config);
+  client.on("error", (err) => console.error(`[imapflow error] ${config.auth.user}: ${err.message}`));
   await client.connect();
   return client;
 }
