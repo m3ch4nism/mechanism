@@ -20,11 +20,23 @@ function log(level, msg) {
   if (level === "ERROR") process.stderr.write(line);
 }
 
+function purgeDeadClients() {
+  for (const [email, c] of Object.entries(clients)) {
+    if (!c.usable) {
+      log("WARN", `purging dead connection: ${email}`);
+      try { c.logout(); } catch {}
+      delete clients[email];
+    }
+  }
+}
+
 process.on("uncaughtException", (err) => {
   log("WARN", `Uncaught: ${err.message}`);
+  purgeDeadClients();
 });
 process.on("unhandledRejection", (err) => {
   log("WARN", `Unhandled rejection: ${err?.message || err}`);
+  purgeDeadClients();
 });
 import {
   initDb, save, addAccount, removeAccount, getAccounts,
@@ -139,7 +151,8 @@ async function handleRequest(req) {
 
       case "fetchFolders": {
         let c = clients[params.email];
-        if (!c) {
+        if (!c || !c.usable) {
+          if (c) { try { await c.logout(); } catch {} delete clients[params.email]; }
           const account = getAccounts().find(a => a.email === params.email);
           if (!account) throw new Error("Account not found");
           const customs = getAllCustomImap();
@@ -154,8 +167,8 @@ async function handleRequest(req) {
 
       case "fetchEmails": {
         let c = clients[params.email];
-        if (!c) {
-          // Auto-reconnect
+        if (!c || !c.usable) {
+          if (c) { try { await c.logout(); } catch {} delete clients[params.email]; }
           const account = getAccounts().find(a => a.email === params.email);
           if (!account) throw new Error("Account not found");
           const customs = getAllCustomImap();
@@ -173,7 +186,8 @@ async function handleRequest(req) {
 
       case "deleteEmails": {
         let c = clients[params.email];
-        if (!c) {
+        if (!c || !c.usable) {
+          if (c) { try { await c.logout(); } catch {} delete clients[params.email]; }
           const account = getAccounts().find(a => a.email === params.email);
           if (!account) throw new Error("Account not found");
           const customs = getAllCustomImap();
@@ -188,7 +202,8 @@ async function handleRequest(req) {
 
       case "searchEmails": {
         let c = clients[params.email];
-        if (!c) {
+        if (!c || !c.usable) {
+          if (c) { try { await c.logout(); } catch {} delete clients[params.email]; }
           const account = getAccounts().find(a => a.email === params.email);
           if (!account) throw new Error("Account not found");
           const customs = getAllCustomImap();
@@ -233,7 +248,11 @@ async function handleRequest(req) {
         // Pad to 3 by reusing connections
         while (clients.length < 3) clients.push(clients[0]);
         try {
-          result = await runAmazonCheck(clients, email, geminiKey);
+          // Fetch all folders so amazon check searches everywhere
+          const allFolders = await fetchFolders(clients[0]);
+          const folderPaths = allFolders.map(f => f.path);
+          log("INFO", `amazonCheck folders: ${folderPaths.join(", ")}`);
+          result = await runAmazonCheck(clients, email, geminiKey, folderPaths);
           saveCheckHistory(email, result);
         } finally {
           const unique = [...new Set(clients)];
@@ -292,15 +311,37 @@ async function handleRequest(req) {
       case "runPreset": {
         const { email, password, host, port, secure, preset, imapUser } = params;
         const proxy = getSetting("proxy");
-        let client = clients[email];
-        let needClose = false;
-        if (!client) {
-          client = await connectImap(email, password, { host, port, secure }, proxy, imapUser);
-          needClose = true;
+        const imapSettings = { host, port, secure };
+
+        // Always use a fresh dedicated connection for runPreset (long-running, stale connections cause spam)
+        const oldClient = clients[email];
+        if (oldClient) { try { await oldClient.logout(); } catch {} delete clients[email]; }
+        let client = await connectImap(email, password, imapSettings, proxy, imapUser);
+
+        async function reconnect(reason) {
+          log("WARN", `runPreset reconnecting (${reason})`);
+          try { await client.logout(); } catch {}
+          client = await connectImap(email, password, imapSettings, proxy, imapUser);
         }
+
         try {
           const senders = preset.sender ? preset.sender.split(",").map(s => s.trim()).filter(Boolean) : [];
-          const folders = preset.folder === "*" ? (await fetchFolders(client)).map(f => f.path) : [preset.folder || "INBOX"];
+
+          // Fetch folders with reconnect fallback
+          let folders;
+          if (preset.folder === "*") {
+            try {
+              folders = (await fetchFolders(client)).map(f => f.path);
+            } catch (e) {
+              if (/connection not available/i.test(e.message)) {
+                await reconnect("fetchFolders failed");
+                folders = (await fetchFolders(client)).map(f => f.path);
+              } else throw e;
+            }
+          } else {
+            folders = [preset.folder || "INBOX"];
+          }
+
           const allResults = [];
           const seenUids = new Set();
           for (const folder of folders) {
@@ -323,7 +364,20 @@ async function handleRequest(req) {
                   if (!seenUids.has(key)) { seenUids.add(key); allResults.push({ ...m, folder }); }
                 }
               } catch (e) {
-                log("ERROR", `runPreset folder=${folder}: ${e.message}`);
+                if (/connection not available/i.test(e.message)) {
+                  try {
+                    await reconnect(`folder=${folder}`);
+                    const msgs = await searchEmails(client, folder, criteria, 100);
+                    for (const m of msgs) {
+                      const key = `${folder}:${m.uid}`;
+                      if (!seenUids.has(key)) { seenUids.add(key); allResults.push({ ...m, folder }); }
+                    }
+                  } catch (e2) {
+                    log("ERROR", `runPreset folder=${folder} retry failed: ${e2.message}`);
+                  }
+                } else {
+                  log("ERROR", `runPreset folder=${folder}: ${e.message}`);
+                }
               }
             }
           }
@@ -331,7 +385,9 @@ async function handleRequest(req) {
           result = allResults.slice(0, 200);
           log("INFO", `runPreset "${preset.name}" total ${result.length} emails`);
         } finally {
-          if (needClose) { try { await client.logout(); } catch {} }
+          // Always close the dedicated runPreset connection and clear cache
+          try { await client.logout(); } catch {}
+          delete clients[email];
         }
         break;
       }

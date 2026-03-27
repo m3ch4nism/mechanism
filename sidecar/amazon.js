@@ -66,8 +66,12 @@ function getTextBody(parsed) {
   return "";
 }
 
-export async function runAmazonCheck(clients, email, geminiKey) {
+export async function runAmazonCheck(clients, email, geminiKey, folders) {
   const [c1, c2, c3] = Array.isArray(clients) ? clients : [clients, clients, clients];
+  // Prioritize INBOX first, then the rest
+  const searchFolders = folders && folders.length > 0
+    ? ["INBOX", ...folders.filter(f => f !== "INBOX")]
+    : ["INBOX"];
 
   const report = {
     email,
@@ -87,15 +91,15 @@ export async function runAmazonCheck(clients, email, geminiKey) {
   try {
     // Wave 1: cards + orders + name (parallel on 3 connections)
     await Promise.all([
-      extractCards(c1, report),
-      extractOrders(c2, report),
-      extractAccountName(c3, report),
+      extractCards(c1, report, searchFolders),
+      extractOrders(c2, report, searchFolders),
+      extractAccountName(c3, report, searchFolders),
     ]);
     // Wave 2: subs + digital + cart (parallel on 3 connections)
     await Promise.all([
-      extractSubscribeSave(c1, report),
-      extractDigitalSubs(c2, report),
-      extractCartInterest(c3, report),
+      extractSubscribeSave(c1, report, searchFolders),
+      extractDigitalSubs(c2, report, searchFolders),
+      extractCartInterest(c3, report, searchFolders),
     ]);
     // Wave 3: AI product name extraction (dedup first)
     const rawProducts = [...report.cartInterest.recommendations, ...report.cartInterest.storeNews]
@@ -121,38 +125,55 @@ export async function runAmazonCheck(clients, email, geminiKey) {
   return report;
 }
 
-async function imapSearch(client, criteria, limit = 50, report = null, section = "") {
-  const lock = await client.getMailboxLock("INBOX");
-  try {
-    const uids = await client.search(criteria, { uid: true });
-    if (!uids.length) return [];
-    const targetUids = uids.slice(-limit);
-    const results = [];
-    for await (const msg of client.fetch(targetUids, { uid: true, source: true }, { uid: true })) {
-      results.push(msg.source);
-      if (report) {
-        const p = await simpleParser(msg.source);
-        report.sourceEmails.push({
-          uid: String(msg.uid),
-          subject: p.subject || "(no subject)",
-          sender: p.from?.text || "",
-          date: p.date?.toISOString() || "",
-          bodyText: p.text || "",
-          bodyHtml: p.html || "",
-          section,
-        });
+async function imapSearch(client, criteria, limit = 50, report = null, section = "", folders = ["INBOX"]) {
+  const results = [];
+  const seenMsgIds = new Set();
+
+  for (const folder of folders) {
+    if (results.length >= limit) break;
+    try {
+      const lock = await client.getMailboxLock(folder);
+      try {
+        const uids = await client.search(criteria, { uid: true });
+        if (!uids.length) continue;
+        const remaining = limit - results.length;
+        const targetUids = uids.slice(-remaining);
+        for await (const msg of client.fetch(targetUids, { uid: true, source: true }, { uid: true })) {
+          // Deduplicate by Message-ID header
+          const headerChunk = msg.source.toString("utf8", 0, Math.min(msg.source.length, 4000));
+          const msgIdMatch = headerChunk.match(/^Message-I[Dd]:\s*(<[^>]+>)/m);
+          const msgId = msgIdMatch ? msgIdMatch[1] : null;
+          if (msgId && seenMsgIds.has(msgId)) continue;
+          if (msgId) seenMsgIds.add(msgId);
+
+          results.push(msg.source);
+          if (report) {
+            const p = await simpleParser(msg.source);
+            report.sourceEmails.push({
+              uid: String(msg.uid),
+              subject: p.subject || "(no subject)",
+              sender: p.from?.text || "",
+              date: p.date?.toISOString() || "",
+              bodyText: p.text || "",
+              bodyHtml: p.html || "",
+              section,
+            });
+          }
+        }
+      } finally {
+        lock.release();
       }
+    } catch {
+      // Skip folders that can't be selected (e.g., \Noselect, namespace roots)
     }
-    return results;
-  } finally {
-    lock.release();
   }
+  return results;
 }
 
-async function extractCards(client, report) {
+async function extractCards(client, report, folders) {
   try {
-    const returnRaws = await imapSearch(client, { from: "return@amazon.com" }, 50, report, "Cards");
-    const payRaws = await imapSearch(client, { from: "payments-messages@amazon.com" }, 50, report, "Cards");
+    const returnRaws = await imapSearch(client, { from: "return@amazon.com" }, 50, report, "Cards", folders);
+    const payRaws = await imapSearch(client, { from: "payments-messages@amazon.com" }, 50, report, "Cards", folders);
     report.raw["return@amazon.com"] = returnRaws.length;
     report.raw["payments-messages@amazon.com"] = payRaws.length;
 
@@ -263,10 +284,10 @@ async function extractCards(client, report) {
   }
 }
 
-async function extractOrders(client, report) {
+async function extractOrders(client, report, folders) {
   try {
-    let raws = await imapSearch(client, { from: "shipment-tracking@amazon.com" }, 3, report, "Orders");
-    if (!raws.length) raws = await imapSearch(client, { from: "auto-confirm@amazon.com" }, 3, report, "Orders");
+    let raws = await imapSearch(client, { from: "shipment-tracking@amazon.com" }, 3, report, "Orders", folders);
+    if (!raws.length) raws = await imapSearch(client, { from: "auto-confirm@amazon.com" }, 3, report, "Orders", folders);
     for (const raw of raws.reverse()) {
       const p = await parseRaw(raw);
       const body = getTextBody(p);
@@ -308,9 +329,9 @@ async function extractOrders(client, report) {
   }
 }
 
-async function extractSubscribeSave(client, report) {
+async function extractSubscribeSave(client, report, folders) {
   try {
-    const raws = await imapSearch(client, { from: "no-reply@amazon.com", body: "Subscribe & Save" }, 50, report, "S&S");
+    const raws = await imapSearch(client, { from: "no-reply@amazon.com", body: "Subscribe & Save" }, 50, report, "S&S", folders);
     const allItems = new Set();
     for (const raw of raws) {
       const p = await parseRaw(raw);
@@ -410,7 +431,7 @@ async function extractSubscribeSave(client, report) {
   }
 }
 
-async function extractDigitalSubs(client, report) {
+async function extractDigitalSubs(client, report, folders) {
   const DIGITAL_SUBS = [
     "Amazon Music", "Amazon Prime", "Prime Video", "Prime Gaming",
     "HBO Max", "Max", "HBO", "Paramount+", "Paramount Plus",
@@ -419,7 +440,7 @@ async function extractDigitalSubs(client, report) {
     "AMC+", "MGM+", "Freevee", "Luna", "Amazon Drive", "Amazon Photos",
   ];
   try {
-    const raws = await imapSearch(client, { from: "no-reply@amazon.com", body: "subscription" }, 50, report, "Digital Subs");
+    const raws = await imapSearch(client, { from: "no-reply@amazon.com", body: "subscription" }, 50, report, "Digital Subs", folders);
     // found[name] = { status, date } -- keep most recent email's status
     const found = {};
     for (const raw of raws) {
@@ -486,12 +507,15 @@ async function extractDigitalSubs(client, report) {
   }
 }
 
-async function extractAccountName(client, report) {
+async function extractAccountName(client, report, folders) {
   const BLACKLIST = /^(amazon|hello|dear|items?|order|view|check|track|return|refund|click|manage|update|cancel|shop|learn|see|get|save|sign|log|visit|shipping|delivery|please|thank|buy|sell|price|free|new|from|your|this|that|the|here|more|now|out|all|for|has|was|are|our|its|and|the|you|how|did|not|but|any|can|may|will|have|what|why|per|inc|llc|corp|usa|qty|usd|ups|via|est|sun|mon|tue|wed|thu|fri|sat|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)$/i;
   // Collect name candidates with weights from multiple sources
   const candidates = {};
   function addCandidate(name, weight) {
-    if (!name || name.length < 2 || /\d/.test(name) || BLACKLIST.test(name)) return;
+    if (!name || name.length < 2 || /\d/.test(name)) return;
+    // Check each word against blacklist
+    const words = name.split(/\s+/);
+    if (words.every(w => BLACKLIST.test(w))) return;
     const key = name.toLowerCase();
     if (!candidates[key]) candidates[key] = { name, count: 0, weight: 0 };
     candidates[key].count++;
@@ -499,33 +523,33 @@ async function extractAccountName(client, report) {
   }
   try {
     // Source 1: marketplace-messages "NAME, will you rate" (highest reliability)
-    const raws = await imapSearch(client, { from: "marketplace-messages@amazon.com" }, 10, report, "Name");
+    const raws = await imapSearch(client, { from: "marketplace-messages@amazon.com" }, 10, report, "Name", folders);
     for (const raw of raws) {
       const p = await parseRaw(raw);
-      const subjMatch = (p.subject || "").match(/^(\w+),\s+will you rate/i);
-      if (subjMatch) addCandidate(subjMatch[1], 10);
+      const subjMatch = (p.subject || "").match(/^(.+?),\s+will you rate/i);
+      if (subjMatch) addCandidate(subjMatch[1].trim(), 10);
       const body = getTextBody(p);
-      const dearMatch = body.match(/^Dear\s+(\w+)/im);
+      const dearMatch = body.match(/^Dear\s+([A-Za-z]+(?:\s+[A-Za-z]+)*)/im);
       if (dearMatch) addCandidate(dearMatch[1], 8);
     }
     // Source 2: return@ / auto-confirm@ "Hello/Hi/Dear NAME,"
     for (const sender of ["return@amazon.com", "auto-confirm@amazon.com"]) {
-      const fbRaws = await imapSearch(client, { from: sender }, 5, report, "Name");
+      const fbRaws = await imapSearch(client, { from: sender }, 5, report, "Name", folders);
       for (const raw of fbRaws) {
         const p = await parseRaw(raw);
         const body = getTextBody(p);
-        for (const pat of [/^Hello\s+(\w+)/im, /^Hi\s+(\w+)/im, /^Dear\s+(\w+)/im, /Thanks for your order,\s+(\w+)/i, /Delivering to\s+(\w+)/im]) {
+        for (const pat of [/^Hello\s+([A-Za-z]+(?:\s+[A-Za-z]+)*)/im, /^Hi\s+([A-Za-z]+(?:\s+[A-Za-z]+)*)/im, /^Dear\s+([A-Za-z]+(?:\s+[A-Za-z]+)*)/im, /Thanks for your order,\s+([A-Za-z]+(?:\s+[A-Za-z]+)*)/i, /Delivering to\s+([A-Za-z]+(?:\s+[A-Za-z]+)*)/im]) {
           const m = pat.exec(body);
           if (m) addCandidate(m[1], 5);
         }
       }
     }
     // Source 3: shipment-tracking "Hi NAME," / "Delivering to NAME"
-    const stRaws = await imapSearch(client, { from: "shipment-tracking@amazon.com" }, 5, report, "Name");
+    const stRaws = await imapSearch(client, { from: "shipment-tracking@amazon.com" }, 5, report, "Name", folders);
     for (const raw of stRaws) {
       const p = await parseRaw(raw);
       const body = getTextBody(p);
-      for (const pat of [/^Hi\s+(\w+)/im, /Delivering to\s+(\w+)/im]) {
+      for (const pat of [/^Hi\s+([A-Za-z]+(?:\s+[A-Za-z]+)*)/im, /Delivering to\s+([A-Za-z]+(?:\s+[A-Za-z]+)*)/im]) {
         const m = pat.exec(body);
         if (m) addCandidate(m[1], 3);
       }
@@ -538,12 +562,12 @@ async function extractAccountName(client, report) {
   }
 }
 
-async function extractCartInterest(client, report) {
+async function extractCartInterest(client, report, folders) {
   try {
     // Method 1: recommendations from shipment/order emails
     const senders = ["shipment-tracking@amazon.com", "auto-confirm@amazon.com"];
     for (const sender of senders) {
-      const raws = await imapSearch(client, { from: sender }, 10, report, "Cart");
+      const raws = await imapSearch(client, { from: sender }, 10, report, "Cart", folders);
       for (const raw of raws) {
         const p = await parseRaw(raw);
         if (!p.html) continue;
@@ -565,7 +589,7 @@ async function extractCartInterest(client, report) {
       }
     }
     // Method 2: store-news
-    const newsRaws = await imapSearch(client, { from: "store-news@amazon.com" }, 5, report, "Cart");
+    const newsRaws = await imapSearch(client, { from: "store-news@amazon.com" }, 5, report, "Cart", folders);
     for (const raw of newsRaws) {
       const p = await parseRaw(raw);
       if (!p.html) continue;

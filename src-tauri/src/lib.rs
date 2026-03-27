@@ -2,7 +2,6 @@
 fn get_exe_dir() -> Result<String, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let dir = exe.parent().ok_or("no parent dir")?.to_string_lossy().to_string();
-    // Strip \\?\ prefix, then convert to forward slashes for node compatibility
     let clean = if dir.starts_with("\\\\?\\") { dir[4..].to_string() } else { dir };
     Ok(clean.replace('\\', "/"))
 }

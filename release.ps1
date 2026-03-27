@@ -18,7 +18,7 @@ Write-Host "`n=== mechanism release $TAG ===`n" -ForegroundColor Cyan
 
 # 1. Build
 Write-Host "[1/5] Building..." -ForegroundColor Yellow
-taskkill /F /IM "amazon-mail.exe" 2>$null
+try { taskkill /F /IM "amazon-mail.exe" 2>$null } catch {}
 Start-Sleep 1
 Push-Location $ROOT
 npx tauri build

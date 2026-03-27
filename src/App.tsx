@@ -24,14 +24,14 @@ export default function App() {
   const [showChangelog, setShowChangelog] = useState(false);
 
   const CHANGELOG: Record<string, string> = {
+    "0.2.1": "• Фикс: пресеты больше не спамят \"Connection not available\" при разрыве соединения\n• Авто-переподключение IMAP при таймауте во время работы пресета\n• Очистка мёртвых соединений из кэша",
+    "0.2.0": "• Amazon Check ищет по ВСЕМ папкам (не только INBOX)\n• Фикс имени аккаунта (полное имя вместо первого слова)\n• Дедупликация писем по Message-ID",
     "0.1.9": "• Добавлено поле IMAP Username (для провайдеров типа Comcast/TWC)\n• Удаление писем через IMAP (кнопка + клавиша Delete)\n• Статус подключения: зелёный/красный/серый индикатор\n• Авто-проверка всех аккаунтов при запуске\n• Исправлен анализ Amazon: карты, подписки S&S, имя аккаунта, цифровые подписки\n• Исправлены крашы ECONNRESET/Socket timeout",
   };
 
   useEffect(() => {
     const t = localStorage.getItem("theme");
     if (t) document.documentElement.setAttribute("data-theme", t);
-    const fs = localStorage.getItem("fontSize");
-    if (fs) document.documentElement.style.fontSize = fs + "px";
     // Show changelog after update
     const lastVersion = localStorage.getItem("lastSeenVersion");
     const currentVersion = __APP_VERSION__;
