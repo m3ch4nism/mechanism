@@ -204,7 +204,7 @@ export async function fetchEmails(client, folder, limit = 50) {
     for (const uid of uids) {
       const tmpPath = path.join(tmpDir, `email_${uid}_${crypto.randomBytes(4).toString("hex")}.eml`);
       try {
-        const { content } = await client.download(uid);
+        const { content } = await client.download(String(uid), undefined, { uid: true });
         await new Promise((resolve, reject) => {
           const ws = fs.createWriteStream(tmpPath);
           content.pipe(ws);
@@ -268,7 +268,7 @@ export async function searchEmails(client, folder, criteria, limit = 50) {
     for (const uid of uids) {
       const tmpPath = path.join(tmpDir, `email_${uid}_${crypto.randomBytes(4).toString("hex")}.eml`);
       try {
-        const { content } = await client.download(uid);
+        const { content } = await client.download(String(uid), undefined, { uid: true });
         await new Promise((resolve, reject) => {
           const ws = fs.createWriteStream(tmpPath);
           content.pipe(ws);
